@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+[ -z "${DEBUG:-}" ] || set -x
+
+set -euo pipefail
+
+_tmux_layout_source_dir=$(dirname "${BASH_SOURCE[0]}")
+
+# Verify the Bash runtime is sufficient
+#
+# Subcommands are responsible for checking their own external tool
+# dependencies (e.g. tmux, yq, envsubst) so help and version remain
+# usable even on a fresh install.
+_check_dependencies() {
+	if [[ "${BASH_VERSINFO[0]}" -lt 4 || ("${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -lt 4) ]]; then
+		echo "tmux-layout: requires Bash 4.4+ (found ${BASH_VERSION})" >&2
+		echo "  macOS: brew install bash" >&2
+		exit 1
+	fi
+}
+
+# Help function
+#
+# Displays comprehensive help information for all commands.
+_show_help() {
+	cat <<'EOF'
+tmux-layout - apply YAML-defined tmux layouts
+
+USAGE:
+    tmux-layout <command> [options]
+
+COMMANDS:
+    switch <name>    Apply a layout from ~/.config/tmux/layouts/<name>.yml
+    list             List available layouts
+
+SEE ALSO:
+    tmux-layout switch --help    # switch command help
+    tmux-layout list --help      # list command help
+EOF
+}
+
+# Version function
+#
+# Reads and displays the current version from version.txt.
+_show_version() {
+	cat "$_tmux_layout_source_dir/version.txt"
+}
+
+# Main entry point
+main() {
+	local command="${1:-}"
+	shift || true
+
+	case $command in
+	switch)
+		_tmux_layout_switch "$@"
+		;;
+	list)
+		_tmux_layout_list "$@"
+		;;
+	--version | -V)
+		_show_version
+		;;
+	--help | -h | help | "")
+		_show_help
+		;;
+	*)
+		echo "tmux-layout: unknown command '$command'" >&2
+		echo "Available commands: switch, list" >&2
+		echo "Run 'tmux-layout --help' for usage information" >&2
+		exit 1
+		;;
+	esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	_check_dependencies
+
+	# Source command modules
+	source "$_tmux_layout_source_dir/scripts/tmux_layout_switch.sh"
+	source "$_tmux_layout_source_dir/scripts/tmux_layout_list.sh"
+
+	main "$@"
+fi

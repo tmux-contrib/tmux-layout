@@ -116,7 +116,7 @@ _build_pane_cmd() {
 # Usage: _new_window <target-session> <window-name> <cmd-string>
 _new_window() {
 	local target=$1 wname=$2 cmd=$3
-	local -a args=(-a -d -P -F '#{window_id}' -t "$target")
+	local -a args=(-d -P -F '#{window_id}' -t "$target")
 	[ -n "$wname" ] && args+=(-n "$wname")
 	if [ -n "$cmd" ]; then
 		tmux new-window "${args[@]}" "$cmd"

@@ -103,7 +103,7 @@ _build_pane_cmd() {
 	local cmd=$1
 	[ -z "$cmd" ] && return 0
 	if [ -n "${IN_NIX_SHELL:-}" ]; then
-		printf 'nix develop -c %s' "$cmd"
+		printf 'nix develop -c %q -c %q' "${SHELL:-bash}" "$cmd"
 	else
 		printf '%s' "$cmd"
 	fi

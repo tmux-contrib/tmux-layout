@@ -70,19 +70,19 @@ tmux-layout switch --help
 ```yaml
 session:
   name: my-session-name
-  cwd: ~/code                   # optional; default cwd for every pane
+  cwd: ~/code # optional; default cwd for every pane
 windows:
   - name: my-window-name
-    layout: tiled               # optional; passed to `tmux select-layout`
-    cwd: ~/code/myapp           # optional; overrides session.cwd for this window
+    layout: tiled # optional; passed to `tmux select-layout`
+    cwd: ~/code/myapp # optional; overrides session.cwd for this window
     panes:
-      - name: my-tig-pane       # optional; sets pane title
-        command: "tig"          # optional; empty leaves pane in default shell
+      - name: my-tig-pane # optional; sets pane title
+        command: "tig" # optional; empty leaves pane in default shell
       - name: my-claude-pane
         command: "claude"
       - name: my-nvim-pane
         command: "nvim"
-        cwd: ~/code/myapp/src   # optional; overrides window.cwd for this pane
+        cwd: ~/code/myapp/src # optional; overrides window.cwd for this pane
 ```
 
 A layout may declare multiple `windows`, each with one or more `panes`.
@@ -121,3 +121,7 @@ created via `tmux split-window`.
   Substitution happens at parse time, not at command run time, so any
   `$VAR` in a `command:` is expanded by `envsubst` (not by the shell at
   runtime).
+
+## License
+
+[MIT](LICENSE).

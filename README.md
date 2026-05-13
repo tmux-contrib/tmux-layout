@@ -70,9 +70,11 @@ tmux-layout switch --help
 ```yaml
 session:
   name: my-session-name
+  cwd: ~/code                   # optional; default cwd for every pane
 windows:
   - name: my-window-name
     layout: tiled               # optional; passed to `tmux select-layout`
+    cwd: ~/code/myapp           # optional; overrides session.cwd for this window
     panes:
       - name: my-tig-pane       # optional; sets pane title
         command: "tig"          # optional; empty leaves pane in default shell
@@ -80,6 +82,7 @@ windows:
         command: "claude"
       - name: my-nvim-pane
         command: "nvim"
+        cwd: ~/code/myapp/src   # optional; overrides window.cwd for this pane
 ```
 
 A layout may declare multiple `windows`, each with one or more `panes`.
@@ -93,9 +96,16 @@ created via `tmux split-window`.
 - **Outside tmux**: a new session named `session.name` is created and
   attached. If the session already exists, it is attached as-is (no
   modification) — re-running is safe.
+- **Working directory**: `cwd:` may be set at session, window, or pane
+  level. Precedence is **pane > window > session**, so a window-level
+  `cwd` applies to all its panes unless a pane overrides it. A leading
+  `~` expands to `$HOME`; `${VAR}` forms are expanded via `envsubst`
+  (see below); anything else is passed to `tmux -c` as-is (absolute or
+  relative to wherever tmux is invoked).
 - **Nix dev shells**: if `IN_NIX_SHELL` is set, every pane command is
-  prefixed with `nix develop -c` so tools defined in the dev shell
-  remain available in each pane.
+  run as `nix develop -c "$SHELL" -c "<cmd>"` so tools defined in the
+  dev shell remain available and shell features (pipes, `&&`, aliases)
+  work inside the pane command.
 - **Env substitution**: `${VAR}` references in the YAML are expanded
   via `envsubst` before parsing, e.g.:
 

@@ -122,6 +122,74 @@ YAML
 	[ "$status" -eq 0 ]
 }
 
+@test "switch applies cwd at session, window, and pane level with proper precedence" {
+	# Use real directories so tmux can chdir into them.
+	local dir_s="$BATS_TEST_TMPDIR/s" dir_w="$BATS_TEST_TMPDIR/w" dir_p="$BATS_TEST_TMPDIR/p"
+	mkdir -p "$dir_s" "$dir_w" "$dir_p"
+	# Resolve to canonical paths because tmux reports the canonical form.
+	dir_s=$(cd "$dir_s" && pwd -P)
+	dir_w=$(cd "$dir_w" && pwd -P)
+	dir_p=$(cd "$dir_p" && pwd -P)
+
+	write_layout cwdtest "$(cat <<YAML
+session:
+  name: t-cwd
+  cwd: $dir_s
+windows:
+  - name: only-session
+    panes:
+      - command: "sleep 100"
+  - name: window-override
+    cwd: $dir_w
+    panes:
+      - command: "sleep 100"
+      - command: "sleep 100"
+        cwd: $dir_p
+YAML
+)"
+	"$TMUX_LAYOUT_BIN" switch cwdtest || true
+
+	run tmux has-session -t '=t-cwd'
+	[ "$status" -eq 0 ]
+
+	# Window 1 inherits session.cwd
+	run tmux display-message -t '=t-cwd:only-session.0' -p '#{pane_current_path}'
+	[ "$status" -eq 0 ]
+	[ "$output" = "$dir_s" ]
+
+	# Window 2 pane 0 inherits window.cwd
+	run tmux display-message -t '=t-cwd:window-override.0' -p '#{pane_current_path}'
+	[ "$status" -eq 0 ]
+	[ "$output" = "$dir_w" ]
+
+	# Window 2 pane 1 overrides with pane.cwd
+	run tmux display-message -t '=t-cwd:window-override.1' -p '#{pane_current_path}'
+	[ "$status" -eq 0 ]
+	[ "$output" = "$dir_p" ]
+}
+
+@test "switch expands ~ in cwd to \$HOME" {
+	local home_sub="$BATS_TEST_TMPDIR/home/sub"
+	mkdir -p "$home_sub"
+	home_sub_canon=$(cd "$home_sub" && pwd -P)
+
+	write_layout tildetest "$(cat <<'YAML'
+session:
+  name: t-tilde
+  cwd: ~/sub
+windows:
+  - name: w
+    panes:
+      - command: "sleep 100"
+YAML
+)"
+	HOME="$BATS_TEST_TMPDIR/home" "$TMUX_LAYOUT_BIN" switch tildetest || true
+
+	run tmux display-message -t '=t-tilde:w.0' -p '#{pane_current_path}'
+	[ "$status" -eq 0 ]
+	[ "$output" = "$home_sub_canon" ]
+}
+
 @test "switch appends windows to the current session when invoked from inside tmux" {
 	# Create an outer host session.
 	tmux new-session -d -s host -n original

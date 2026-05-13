@@ -46,10 +46,93 @@ setup() {
 	[ "$output" = "tig" ]
 }
 
-@test "_build_pane_cmd prefixes with 'nix develop -c' inside a nix-shell" {
-	IN_NIX_SHELL=pure run _build_pane_cmd "tig"
+@test "_build_pane_cmd wraps with 'nix develop -c \$SHELL -c' inside a nix-shell" {
+	IN_NIX_SHELL=pure SHELL=/bin/sh run _build_pane_cmd "tig"
 	[ "$status" -eq 0 ]
-	[ "$output" = "nix develop -c tig" ]
+	[ "$output" = "nix develop -c /bin/sh -c tig" ]
+}
+
+@test "_build_pane_cmd shell-escapes commands with metacharacters" {
+	IN_NIX_SHELL=pure SHELL=/bin/sh run _build_pane_cmd "tig --all | less"
+	[ "$status" -eq 0 ]
+	# The pipe must be inside the escaped argument, not a token in the outer
+	# string — parse the output back through `eval` and confirm we get exactly
+	# six args with the command intact.
+	eval "set -- $output"
+	[ "$1" = "nix" ]
+	[ "$2" = "develop" ]
+	[ "$3" = "-c" ]
+	[ "$4" = "/bin/sh" ]
+	[ "$5" = "-c" ]
+	[ "$6" = "tig --all | less" ]
+	[ "$#" -eq 6 ]
+}
+
+@test "_expand_cwd returns empty for empty input" {
+	run _expand_cwd ""
+	[ "$status" -eq 0 ]
+	[ -z "$output" ]
+}
+
+@test "_expand_cwd expands a bare ~ to \$HOME" {
+	HOME=/h run _expand_cwd "~"
+	[ "$status" -eq 0 ]
+	[ "$output" = "/h" ]
+}
+
+@test "_expand_cwd expands ~/foo to \$HOME/foo" {
+	HOME=/h run _expand_cwd "~/foo/bar"
+	[ "$status" -eq 0 ]
+	[ "$output" = "/h/foo/bar" ]
+}
+
+@test "_expand_cwd passes absolute paths through" {
+	run _expand_cwd "/etc/foo"
+	[ "$status" -eq 0 ]
+	[ "$output" = "/etc/foo" ]
+}
+
+@test "_expand_cwd passes relative paths through" {
+	run _expand_cwd "./services/api"
+	[ "$status" -eq 0 ]
+	[ "$output" = "./services/api" ]
+}
+
+@test "_expand_cwd leaves ~user unchanged (unsupported form)" {
+	run _expand_cwd "~root/foo"
+	[ "$status" -eq 0 ]
+	[ "$output" = "~root/foo" ]
+}
+
+@test "_resolve_cwd: pane overrides window overrides session" {
+	HOME=/h
+	_tmux_layout_yaml=$'session:\n  cwd: ~/s\nwindows:\n  - cwd: ~/w\n    panes:\n      - {cwd: ~/p}\n      - {}\n'
+	run _resolve_cwd 0 0
+	[ "$status" -eq 0 ]
+	[ "$output" = "/h/p" ]
+}
+
+@test "_resolve_cwd: falls back to window cwd when pane has none" {
+	HOME=/h
+	_tmux_layout_yaml=$'session:\n  cwd: ~/s\nwindows:\n  - cwd: ~/w\n    panes:\n      - {}\n'
+	run _resolve_cwd 0 0
+	[ "$status" -eq 0 ]
+	[ "$output" = "/h/w" ]
+}
+
+@test "_resolve_cwd: falls back to session cwd when window and pane have none" {
+	HOME=/h
+	_tmux_layout_yaml=$'session:\n  cwd: ~/s\nwindows:\n  - panes: [{}]\n'
+	run _resolve_cwd 0 0
+	[ "$status" -eq 0 ]
+	[ "$output" = "/h/s" ]
+}
+
+@test "_resolve_cwd: empty when nothing is set" {
+	_tmux_layout_yaml=$'session: {name: x}\nwindows:\n  - panes: [{}]\n'
+	run _resolve_cwd 0 0
+	[ "$status" -eq 0 ]
+	[ -z "$output" ]
 }
 
 @test "_yaml_get returns the field value" {

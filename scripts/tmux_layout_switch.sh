@@ -54,6 +54,11 @@ DESCRIPTION:
 
     \${VAR} references in the YAML are expanded via envsubst before parsing.
 
+    An optional 'cwd:' field may be set on session, window, or pane.
+    Precedence is pane > window > session. A leading '~' expands to \$HOME;
+    \${VAR} forms expand via envsubst. Anything else is passed to tmux -c
+    as-is (absolute or relative to the directory tmux is invoked from).
+
 EXAMPLES:
     tmux-layout switch dev
     tmux-layout switch \${PROJECT}
@@ -93,6 +98,35 @@ _yaml_get_int() {
 	yq -r "$1" <<<"$_tmux_layout_yaml"
 }
 
+# Expand a leading ~ in a path. $VAR forms are already expanded by envsubst.
+#
+# `~user` is intentionally not supported — write the absolute path instead.
+#
+# Usage: _expand_cwd <path>
+_expand_cwd() {
+	local p=$1
+	[ -z "$p" ] && return 0
+	# shellcheck disable=SC2088 # ~ inside the case pattern is a literal match, not tilde expansion
+	case $p in
+	'~')   printf '%s' "$HOME" ;;
+	'~/'*) printf '%s%s' "$HOME" "${p#'~'}" ;;
+	*)     printf '%s' "$p" ;;
+	esac
+}
+
+# Resolve the effective cwd for a pane.
+#
+# Precedence: pane > window > session. Echoes empty if none set.
+#
+# Usage: _resolve_cwd <window-index> <pane-index>
+_resolve_cwd() {
+	local i=$1 j=$2 v
+	v=$(_yaml_get ".windows[$i].panes[$j].cwd")
+	[ -z "$v" ] && v=$(_yaml_get ".windows[$i].cwd")
+	[ -z "$v" ] && v=$(_yaml_get '.session.cwd')
+	_expand_cwd "$v"
+}
+
 # Build the shell-command string for tmux to spawn
 #
 # Returns an empty string for empty input (keeps the pane in the default shell).
@@ -113,11 +147,12 @@ _build_pane_cmd() {
 #
 # Echoes the new window id.
 #
-# Usage: _new_window <target-session> <window-name> <cmd-string>
+# Usage: _new_window <target-session> <window-name> <cwd> <cmd-string>
 _new_window() {
-	local target=$1 wname=$2 cmd=$3
+	local target=$1 wname=$2 cwd=$3 cmd=$4
 	local -a args=(-d -P -F '#{window_id}' -t "$target")
 	[ -n "$wname" ] && args+=(-n "$wname")
+	[ -n "$cwd" ]   && args+=(-c "$cwd")
 	if [ -n "$cmd" ]; then
 		tmux new-window "${args[@]}" "$cmd"
 	else
@@ -127,13 +162,15 @@ _new_window() {
 
 # Split a window and echo the new pane id
 #
-# Usage: _split_window <window-id> <cmd-string>
+# Usage: _split_window <window-id> <cwd> <cmd-string>
 _split_window() {
-	local wid=$1 cmd=$2
+	local wid=$1 cwd=$2 cmd=$3
+	local -a args=(-t "$wid" -P -F '#{pane_id}')
+	[ -n "$cwd" ] && args+=(-c "$cwd")
 	if [ -n "$cmd" ]; then
-		tmux split-window -t "$wid" -P -F '#{pane_id}' "$cmd"
+		tmux split-window "${args[@]}" "$cmd"
 	else
-		tmux split-window -t "$wid" -P -F '#{pane_id}'
+		tmux split-window "${args[@]}"
 	fi
 }
 
@@ -145,12 +182,13 @@ _split_window() {
 _add_panes_after_first() {
 	local i=$1 wid=$2 p_count
 	p_count=$(_yaml_get_int ".windows[$i].panes | length")
-	local j p_name p_cmd p_string pane_id
+	local j p_name p_cmd p_cwd p_string pane_id
 	for ((j = 1; j < p_count; j++)); do
 		p_name=$(_yaml_get   ".windows[$i].panes[$j].name")
 		p_cmd=$(_yaml_get    ".windows[$i].panes[$j].command")
+		p_cwd=$(_resolve_cwd "$i" "$j")
 		p_string=$(_build_pane_cmd "$p_cmd")
-		pane_id=$(_split_window "$wid" "$p_string")
+		pane_id=$(_split_window "$wid" "$p_cwd" "$p_string")
 		if [ -n "$p_name" ]; then
 			tmux select-pane -t "$pane_id" -T "$p_name"
 		fi
@@ -172,7 +210,7 @@ _apply_window_layout() {
 # Usage: _create_window_full <window-index> <target-session>
 _create_window_full() {
 	local i=$1 target=$2
-	local w_name p_count p0_name p0_cmd p0_string wid
+	local w_name p_count p0_name p0_cmd p0_cwd p0_string wid
 	w_name=$(_yaml_get ".windows[$i].name")
 	p_count=$(_yaml_get_int ".windows[$i].panes | length")
 	p0_name=""
@@ -181,8 +219,9 @@ _create_window_full() {
 		p0_name=$(_yaml_get ".windows[$i].panes[0].name")
 		p0_cmd=$(_yaml_get  ".windows[$i].panes[0].command")
 	fi
+	p0_cwd=$(_resolve_cwd "$i" 0)
 	p0_string=$(_build_pane_cmd "$p0_cmd")
-	wid=$(_new_window "$target" "$w_name" "$p0_string")
+	wid=$(_new_window "$target" "$w_name" "$p0_cwd" "$p0_string")
 	[ -n "$p0_name" ] && tmux select-pane -t "$wid" -T "$p0_name"
 	_add_panes_after_first "$i" "$wid"
 	_apply_window_layout "$i" "$wid"
@@ -248,7 +287,7 @@ _tmux_layout_switch() {
 			exec tmux attach-session -t "=$target"
 		fi
 
-		local w0_name p0_count p0_name p0_cmd p0_string
+		local w0_name p0_count p0_name p0_cmd p0_cwd p0_string
 		w0_name=$(_yaml_get '.windows[0].name')
 		p0_count=$(_yaml_get_int '.windows[0].panes | length')
 		p0_name=""
@@ -257,9 +296,11 @@ _tmux_layout_switch() {
 			p0_name=$(_yaml_get '.windows[0].panes[0].name')
 			p0_cmd=$(_yaml_get  '.windows[0].panes[0].command')
 		fi
+		p0_cwd=$(_resolve_cwd 0 0)
 		p0_string=$(_build_pane_cmd "$p0_cmd")
 
 		local -a ns_args=(-d -s "$target" -n "${w0_name:-window}")
+		[ -n "$p0_cwd" ] && ns_args+=(-c "$p0_cwd")
 		if [ -n "$p0_string" ]; then
 			tmux new-session "${ns_args[@]}" "$p0_string"
 		else

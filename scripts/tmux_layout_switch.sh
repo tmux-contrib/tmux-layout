@@ -151,7 +151,9 @@ _add_panes_after_first() {
 		p_cmd=$(_yaml_get    ".windows[$i].panes[$j].command")
 		p_string=$(_build_pane_cmd "$p_cmd")
 		pane_id=$(_split_window "$wid" "$p_string")
-		[ -n "$p_name" ] && tmux select-pane -t "$pane_id" -T "$p_name"
+		if [ -n "$p_name" ]; then
+			tmux select-pane -t "$pane_id" -T "$p_name"
+		fi
 	done
 }
 

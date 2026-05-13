@@ -1,7 +1,10 @@
 # tmux-layout
 
-A small CLI that applies predefined tmux layouts from a YAML file in
-`~/.config/tmux/layouts/<name>.yml`.
+> Stop hand-rolling tmux sessions. Declare your windows and panes in a YAML
+> file once, then jump back into the same workspace any time with a single
+> command — Nix dev shell aware, env-substitution included.
+
+[![CI](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml/badge.svg)](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/tmux-contrib/tmux-layout)](https://github.com/tmux-contrib/tmux-layout/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ```sh
 tmux-layout switch dev

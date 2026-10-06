@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/refs/heads/main/schemas/devContainer.base.schema.json",
+  "name": "tmux-layout",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "workspaceFolder": "/home/vscode/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-nix,target=/nix,type=volume",
+    "source=${localWorkspaceFolderBasename}-cache,target=/home/vscode/.cache,type=volume"
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/nix:1": {
+      "extraNixConfig": "experimental-features = nix-command flakes"
+    }
+  },
+  "postCreateCommand": "sudo chown -R vscode:vscode /nix /home/vscode/.cache"
+}

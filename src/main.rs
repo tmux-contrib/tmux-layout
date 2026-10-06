@@ -8,7 +8,7 @@ use crate::app::args::*;
 use crate::app::exec::*;
 use crate::layout::*;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 fn main() -> ExitCode {
@@ -42,6 +42,25 @@ fn run(program: Program) -> Result<()> {
         ProgramCommand::List(args) => {
             let writer = Box::new(std::io::stdout());
             let mut command = ListCommand { writer };
+            command.execute(&args)
+        }
+        ProgramCommand::New(args) => {
+            let cwd = std::env::current_dir().context("failed to read the current directory")?;
+            let environment = environment();
+            let mut command = NewCommand { cwd, environment };
+            command.execute(&args)
+        }
+        ProgramCommand::Edit(args) => {
+            let environment = environment();
+            let editor = ["VISUAL", "EDITOR"]
+                .into_iter()
+                .find_map(|name| var(&environment, name))
+                .unwrap_or("vi")
+                .to_string();
+            let mut command = EditCommand {
+                editor,
+                environment,
+            };
             command.execute(&args)
         }
     }

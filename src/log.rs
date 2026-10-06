@@ -40,6 +40,13 @@ pub fn info(message: impl Display) {
     }
 }
 
+/// Prints the outcome of an action to stderr, unless quiet.
+pub fn success(message: impl Display) {
+    if enabled(Level::Normal) {
+        eprintln!("{} {message}", style("✓").green().bold().for_stderr());
+    }
+}
+
 /// Prints a detail for debugging to stderr, if verbose.
 pub fn debug(message: impl Display) {
     if enabled(Level::Verbose) {
@@ -49,5 +56,26 @@ pub fn debug(message: impl Display) {
                 .dim()
                 .for_stderr()
         );
+    }
+}
+
+/// Returns `count` with `noun`, pluralized by appending `s` (e.g. "1 window", "3 windows").
+pub fn count(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_pluralizes() {
+        assert_eq!(count(0, "window"), "0 windows");
+        assert_eq!(count(1, "window"), "1 window");
+        assert_eq!(count(3, "window"), "3 windows");
     }
 }

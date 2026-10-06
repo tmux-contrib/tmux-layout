@@ -1,0 +1,25 @@
+# Open this layout with `tmux-layout switch {{name}}`.
+#
+# $VAR and ${VAR} are replaced with environment variables when the layout is
+# read, and a leading ~ in a cwd is your home directory.
+
+session:
+  # Name of the tmux session. Switching again attaches to it, unchanged.
+  name: {{name}}
+  # Working directory of every pane, unless its window or the pane sets one.
+  cwd: {{cwd}}
+
+windows:
+  - name: editor
+    # Optional: passed to `tmux select-layout`, e.g. tiled, even-horizontal,
+    # even-vertical, main-horizontal or main-vertical.
+    layout: main-vertical
+    panes:
+      # The first pane is created with the window; the others split it.
+      - name: editor
+        command: ${EDITOR}
+      # Without a command, a pane runs your shell.
+      - name: shell
+        # cwd: ~/somewhere/else
+
+  - name: shell

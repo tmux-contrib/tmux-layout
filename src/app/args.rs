@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 /// Examples shown at the end of each command's help.
 const PROGRAM_HELP: &str = "Get started:
-  mkdir -p ~/.config/tmux/layouts
-  $EDITOR ~/.config/tmux/layouts/dev.yml  # declare a session
-  tmux-layout switch dev                  # open it";
+  tmux-layout new dev     # create ~/.config/tmux/layouts/dev.yml
+  tmux-layout edit dev    # declare your windows and panes
+  tmux-layout switch dev  # open them";
 const SWITCH_EXAMPLES: &str = "Examples:
   tmux-layout switch dev           # ~/.config/tmux/layouts/dev.yml
   tmux-layout switch \"$PROJECT\"    # a layout named after a variable
@@ -14,6 +14,12 @@ const SWITCH_EXAMPLES: &str = "Examples:
 const LIST_EXAMPLES: &str = "Examples:
   tmux-layout list                                 # one name per line
   tmux-layout switch \"$(tmux-layout list | fzf)\"  # pick one";
+const NEW_EXAMPLES: &str = "Examples:
+  tmux-layout new dev          # a layout opening in the current directory
+  tmux-layout new dev --force  # start over";
+const EDIT_EXAMPLES: &str = "Examples:
+  tmux-layout edit dev                       # in $VISUAL or $EDITOR
+  EDITOR=\"code --wait\" tmux-layout edit dev  # in VS Code";
 
 /// Program is the main entry point for the tmux-layout CLI.
 #[derive(Debug, Parser)]
@@ -103,6 +109,26 @@ pub enum ProgramCommand {
         next_display_order = 2
     )]
     List(ListCommandArgs),
+
+    /// Create a starter layout.
+    #[command(
+        name = "new",
+        after_help = NEW_EXAMPLES,
+        about = "Create a starter layout.",
+        long_about = "Write a commented starter layout to <NAME>.yml in the layout directory, with the session named <NAME> and opening in the current directory. An existing layout is never replaced unless --force is given.",
+        next_display_order = 3
+    )]
+    New(NewCommandArgs),
+
+    /// Open a layout in your editor, then check it.
+    #[command(
+        name = "edit",
+        after_help = EDIT_EXAMPLES,
+        about = "Open a layout in your editor, then check it.",
+        long_about = "Open the layout <NAME>.yml (or <NAME>.yaml) in $VISUAL or $EDITOR (vi if neither is set), and check that it is valid once the editor exits, the same way `switch` reads it.",
+        next_display_order = 4
+    )]
+    Edit(EditCommandArgs),
 }
 
 impl ProgramCommand {
@@ -111,6 +137,8 @@ impl ProgramCommand {
         match self {
             ProgramCommand::Switch(args) => &args.parent,
             ProgramCommand::List(args) => &args.parent,
+            ProgramCommand::New(args) => &args.parent,
+            ProgramCommand::Edit(args) => &args.parent,
         }
     }
 }
@@ -133,6 +161,34 @@ pub struct ListCommandArgs {
     /// Shared global flags.
     #[command(flatten)]
     pub parent: ProgramArgs,
+}
+
+/// NewCommandArgs defines the arguments for the NewCommand.
+#[derive(Debug, Args)]
+pub struct NewCommandArgs {
+    /// Shared global flags.
+    #[command(flatten)]
+    pub parent: ProgramArgs,
+
+    /// Name of the layout to create.
+    #[arg(help = "Layout name (the file name without extension).")]
+    pub name: String,
+
+    /// Replace an existing layout.
+    #[arg(help = "Replace the layout if it exists.", long, short)]
+    pub force: bool,
+}
+
+/// EditCommandArgs defines the arguments for the EditCommand.
+#[derive(Debug, Args)]
+pub struct EditCommandArgs {
+    /// Shared global flags.
+    #[command(flatten)]
+    pub parent: ProgramArgs,
+
+    /// Name of the layout to edit.
+    #[arg(help = "Layout name (the file name without extension).")]
+    pub name: String,
 }
 
 #[cfg(test)]
@@ -159,6 +215,16 @@ mod tests {
     #[test]
     fn switch_requires_a_name() {
         assert!(Program::try_parse_from(["tmux-layout", "switch"]).is_err());
+    }
+
+    #[test]
+    fn new_parses_force() {
+        let program = Program::parse_from(["tmux-layout", "new", "dev", "--force"]);
+        let ProgramCommand::New(args) = program.command else {
+            panic!("expected new");
+        };
+        assert_eq!(args.name, "dev");
+        assert!(args.force);
     }
 
     #[test]

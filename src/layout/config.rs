@@ -151,6 +151,14 @@ pub fn find(dir: &Path, name: &str) -> Result<PathBuf> {
         .with_context(|| format!("layout '{name}' not found in {}", dir.display()))
 }
 
+/// Fails unless `name` can name a layout file: not empty, not hidden, and without a `/`.
+pub fn check_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.starts_with('.') || name.contains('/') {
+        bail!("invalid layout name '{name}': use a plain file name, without extension");
+    }
+    Ok(())
+}
+
 /// Returns the names of the layouts in `dir`, sorted.
 pub fn list(dir: &Path) -> Result<Vec<String>> {
     if !dir.is_dir() {
@@ -338,6 +346,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = find(dir.path(), "nope").unwrap_err();
         assert!(err.to_string().contains("layout 'nope' not found"));
+    }
+
+    #[test]
+    fn check_name_accepts_plain_names() {
+        for name in ["dev", "my-project", "api.v2"] {
+            assert!(check_name(name).is_ok(), "{name}");
+        }
+        for name in ["", ".hidden", "a/b", "../up"] {
+            assert!(check_name(name).is_err(), "{name}");
+        }
     }
 
     #[test]

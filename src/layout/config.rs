@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::layout::{expand_home, pane_command, substitute, Environment};
@@ -8,7 +8,7 @@ use crate::layout::{expand_home, pane_command, substitute, Environment};
 const EXTENSIONS: [&str; 2] = ["yml", "yaml"];
 
 /// Layout declares a tmux session and its windows.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Layout {
     /// The session the windows belong to.
@@ -18,38 +18,47 @@ pub struct Layout {
 }
 
 /// Session is the tmux session a layout creates.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Session {
     /// Name of the session.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Working directory of every pane, unless its window or the pane sets one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 }
 
 /// Window is a tmux window and its panes.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Window {
     /// Name of the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Layout passed to `tmux select-layout`, like `tiled` or `main-vertical`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<String>,
     /// Working directory of every pane, unless the pane sets one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     /// The panes, in order. The first one is created with the window.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub panes: Vec<Pane>,
 }
 
 /// Pane is a tmux pane.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Pane {
     /// Title of the pane.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Command run in the pane, instead of the default shell.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// Working directory of the pane.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 }
 

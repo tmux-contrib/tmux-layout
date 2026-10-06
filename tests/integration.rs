@@ -323,7 +323,7 @@ fn switch_adds_windows_to_the_current_session_inside_tmux() {
 
     // Run inside the current session, as tmux would run it from one of its panes
     let socket = ws.tmux(&["display-message", "-t", "=current", "-p", "#{socket_path}"]);
-    let pane = ws.tmux(&["display-message", "-t", "=current", "-p", "#{pane_id}"]);
+    let pane = ws.tmux(&["display-message", "-t", "=current:", "-p", "#{pane_id}"]);
     ws.tmux_layout()
         .env("TMUX", format!("{},0,0", socket[0]))
         .env("TMUX_PANE", &pane[0])
@@ -358,4 +358,120 @@ fn switch_opens_a_new_layout_without_edits() {
     let panes = ws.tmux(&["list-panes", "-t", "=project:editor", "-F", "#{pane_title}"]);
     assert_eq!(panes, vec!["editor", "shell"]);
     assert_pane_path(&ws, "=project:shell.0", &project);
+}
+
+/// Returns the layout file `name` of `ws`, parsed.
+fn read_layout(ws: &Workspace, name: &str) -> serde_yaml_ng::Value {
+    let text = std::fs::read_to_string(ws.path("layouts").join(format!("{name}.yml"))).unwrap();
+    serde_yaml_ng::from_str(&text).unwrap()
+}
+
+#[test]
+fn save_round_trips_a_layout() {
+    let ws = Workspace::new();
+    let (s, p, w) = (ws.path("home/s"), ws.path("p"), ws.path("w"));
+    for dir in [&s, &p, &w] {
+        std::fs::create_dir(dir).unwrap();
+    }
+    let ws = ws.layout(
+        "original",
+        &format!(
+            "session:
+  name: t-save
+  cwd: ~/s
+windows:
+  - name: editor
+    panes:
+      - name: first
+        command: sleep 100
+      - command: sleep 200
+        cwd: {}
+  - cwd: {}
+    panes:
+      - command: \"sleep 300 # it's $HOME\"
+",
+            p.display(),
+            w.display()
+        ),
+    );
+    ws.tmux_layout()
+        .args(["switch", "original"])
+        .output()
+        .unwrap();
+    assert_pane_path(&ws, "=t-save:0.0", &s);
+    assert_pane_path(&ws, "=t-save:0.1", &p);
+    assert_pane_path(&ws, "=t-save:1.0", &w);
+
+    ws.tmux_layout()
+        .args(["save", "saved", "-t", "t-save"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Saved").and(predicate::str::contains("(2 windows)")));
+
+    // The saved layout is the original, plus the exact layout of the window with two panes
+    let window_layout = |ws: &Workspace| {
+        ws.tmux(&[
+            "display-message",
+            "-t",
+            "=t-save:0",
+            "-p",
+            "#{window_layout}",
+        ])
+    };
+    let layout = window_layout(&ws);
+    let mut saved = read_layout(&ws, "saved");
+    let editor = saved["windows"][0].as_mapping_mut().unwrap();
+    assert_eq!(editor.remove("layout").unwrap(), layout[0].as_str());
+    let original = std::fs::read_to_string(ws.path("layouts/original.yml")).unwrap();
+    let original = original.replace("$HOME", &ws.path("home").display().to_string());
+    assert_eq!(
+        saved,
+        serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&original).unwrap()
+    );
+
+    // Switching to the saved layout brings the session back
+    ws.tmux(&["kill-session", "-t", "=t-save"]);
+    ws.tmux_layout().args(["switch", "saved"]).output().unwrap();
+    assert_eq!(window_layout(&ws), layout);
+    assert_pane_path(&ws, "=t-save:0.1", &p);
+}
+
+#[test]
+fn save_writes_the_current_session_inside_tmux() {
+    let ws = Workspace::new();
+    ws.tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "current",
+        "-n",
+        "only",
+        "sleep 100",
+    ]);
+    ws.tmux(&["new-session", "-d", "-s", "other", "sleep 100"]);
+
+    // Run inside the current session, as tmux would run it from one of its panes
+    let socket = ws.tmux(&["display-message", "-t", "=current", "-p", "#{socket_path}"]);
+    let pane = ws.tmux(&["display-message", "-t", "=current:", "-p", "#{pane_id}"]);
+    ws.tmux_layout()
+        .env("TMUX", format!("{},0,0", socket[0]))
+        .env("TMUX_PANE", &pane[0])
+        .args(["save", "current"])
+        .assert()
+        .success();
+
+    let saved = read_layout(&ws, "current");
+    assert_eq!(saved["session"]["name"], "current");
+    assert_eq!(saved["windows"][0]["name"], "only");
+    assert_eq!(saved["windows"][0]["panes"][0]["command"], "sleep 100");
+}
+
+#[test]
+fn save_fails_outside_tmux_without_a_target() {
+    let ws = Workspace::new();
+    ws.tmux_layout()
+        .args(["save", "dev"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not inside tmux"));
 }

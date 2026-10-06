@@ -50,10 +50,18 @@ tmux-layout edit dev     # declare your windows and panes
 tmux-layout switch dev   # open them
 ```
 
+Or start from the session you already have, from inside tmux:
+
+```sh
+tmux-layout save dev     # write the current session to ~/.config/tmux/layouts/dev.yml
+```
+
 ```sh
 tmux-layout switch <name>        # apply a layout
 tmux-layout new <name> [--force] # create a commented starter layout
 tmux-layout edit <name>          # open a layout in $VISUAL or $EDITOR, then check it
+tmux-layout save <name> [-t <session>] [--force]
+                                 # save a tmux session as a layout
 tmux-layout list                 # list available layouts
 tmux-layout --help
 tmux-layout switch --help
@@ -65,6 +73,21 @@ tmux-layout switch --help
 - `edit` checks the layout the same way `switch` reads it once your editor
   exits, so mistakes show up right away instead of the next time you switch.
   Editors with arguments work, e.g. `EDITOR="code --wait"`.
+- `save` writes the session you are in, or the one given with `--target`
+  (`-t`), as a layout `switch` opens again. Like `new`, it never replaces an
+  existing layout unless `--force` is given. It saves:
+  - the session name, and as `session.cwd` the directory most panes share;
+  - window names (unless tmux names the window automatically), the exact
+    `select-layout` string of windows with several panes, and a `cwd` when
+    most of a window's panes share one that differs from the session's;
+  - pane titles (unless it is the default, the host name), a pane `cwd` when
+    it differs from its window's, and the command the pane was started with,
+    or else the program it runs unless it is a shell. Only the name of a
+    running program is known, not its arguments: `nvim`, not
+    `nvim src/main.rs`.
+
+  Paths in your home directory are written as `~/...`. Run
+  `tmux-layout edit <name>` afterwards to adjust what was saved.
 
 Layouts are read from `$XDG_CONFIG_HOME/tmux/layouts` (default
 `~/.config/tmux/layouts`). Use `--layout-dir` (`-d`) or `TMUX_LAYOUT_DIR` to

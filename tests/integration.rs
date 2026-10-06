@@ -165,6 +165,35 @@ fn switch_fails_for_an_invalid_layout() {
         .stderr(predicate::str::contains("session.name is required"));
 }
 
+#[test]
+fn new_creates_a_layout_that_list_shows() {
+    let ws = Workspace::new();
+    ws.tmux_layout()
+        .current_dir(ws.path("home"))
+        .args(["new", "dev"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Created").and(predicate::str::contains("dev.yml")));
+    ws.tmux_layout()
+        .arg("list")
+        .assert()
+        .success()
+        .stdout("dev\n");
+}
+
+#[test]
+fn edit_opens_the_layout_in_visual_before_editor() {
+    let ws = Workspace::new();
+    ws.tmux_layout().args(["new", "dev"]).assert().success();
+    ws.tmux_layout()
+        .env("VISUAL", "true")
+        .env("EDITOR", "false")
+        .args(["edit", "dev"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("is valid (2 windows)"));
+}
+
 // The tests below run a tmux server. Attaching fails without a terminal, so they check the
 // session after `switch` ran instead of its exit status.
 
@@ -306,4 +335,27 @@ fn switch_adds_windows_to_the_current_session_inside_tmux() {
     assert_eq!(windows, vec!["first", "added"]);
     let sessions = ws.tmux(&["list-sessions", "-F", "#{session_name}"]);
     assert_eq!(sessions, vec!["current"]);
+}
+
+#[test]
+fn switch_opens_a_new_layout_without_edits() {
+    let ws = Workspace::new();
+    let project = ws.path("home/project");
+    std::fs::create_dir(&project).unwrap();
+    ws.tmux_layout()
+        .current_dir(&project)
+        .args(["new", "project"])
+        .assert()
+        .success();
+    ws.tmux_layout()
+        .env_remove("EDITOR")
+        .args(["switch", "project"])
+        .output()
+        .unwrap();
+
+    let windows = ws.tmux(&["list-windows", "-t", "=project", "-F", "#{window_name}"]);
+    assert_eq!(windows, vec!["editor", "shell"]);
+    let panes = ws.tmux(&["list-panes", "-t", "=project:editor", "-F", "#{pane_title}"]);
+    assert_eq!(panes, vec!["editor", "shell"]);
+    assert_pane_path(&ws, "=project:shell.0", &project);
 }

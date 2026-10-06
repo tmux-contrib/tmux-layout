@@ -1,8 +1,13 @@
 use crate::app::args::*;
 use crate::layout::*;
-use crate::log::{debug, info};
+use crate::log::{count, debug, info, success};
 use anyhow::{bail, Context, Result};
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// The layout `new` writes; `{{name}}` and `{{cwd}}` are replaced with YAML values.
+const STARTER_LAYOUT: &str = include_str!("layout.yml");
 
 /// Format of the ids tmux prints for a new window: its session, itself and its first pane.
 const WINDOW_IDS: &str = "#{session_id} #{window_id} #{pane_id}";
@@ -119,6 +124,105 @@ fn pane_args(mut command: Vec<String>, pane: &PanePlan) -> Vec<String> {
     }
     command.extend(pane.command.clone());
     command
+}
+
+/// Returns `value` as a YAML scalar, quoted if it needs to be.
+fn yaml_scalar(value: &str) -> Result<String> {
+    Ok(serde_yaml_ng::to_string(value)?.trim_end().to_string())
+}
+
+/// Returns `path` with the home directory in `env` written as `~`, so the layout works for
+/// the same directory on other machines.
+fn tilde(path: &Path, env: &Environment) -> String {
+    let rest = var(env, "HOME").and_then(|home| path.strip_prefix(home).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+/// Create a starter layout.
+pub struct NewCommand {
+    /// Directory the session of the layout opens in.
+    pub cwd: PathBuf,
+    /// Environment holding the home directory.
+    pub environment: Environment,
+}
+
+impl NewCommand {
+    /// Execute the NewCommand with the provided arguments.
+    pub fn execute(&mut self, args: &NewCommandArgs) -> Result<()> {
+        let (dir, name) = (&args.parent.layout_dir, &args.name);
+        check_name(name)?;
+        let path = match find(dir, name) {
+            Ok(path) if !args.force => bail!(
+                "{} already exists (edit it with `tmux-layout edit {name}`, or replace it with --force)",
+                path.display()
+            ),
+            Ok(path) => path,
+            Err(_) => dir.join(format!("{name}.yml")),
+        };
+
+        let layout = STARTER_LAYOUT
+            .replace("{{name}}", &yaml_scalar(name)?)
+            .replace(
+                "{{cwd}}",
+                &yaml_scalar(&tilde(&self.cwd, &self.environment))?,
+            );
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+        std::fs::write(&path, layout)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+
+        success(format!("Created {}", path.display()));
+        info(format!(
+            "declare your windows with `tmux-layout edit {name}`, then open them with `tmux-layout switch {name}`"
+        ));
+        Ok(())
+    }
+}
+
+/// Open a layout in an editor, then check it.
+pub struct EditCommand {
+    /// Editor command, which may include arguments (e.g. `code --wait`).
+    pub editor: String,
+    /// Environment the layout is checked against, as `switch` reads it.
+    pub environment: Environment,
+}
+
+impl EditCommand {
+    /// Execute the EditCommand with the provided arguments.
+    pub fn execute(&mut self, args: &EditCommandArgs) -> Result<()> {
+        let name = &args.name;
+        let path = match find(&args.parent.layout_dir, name) {
+            Ok(path) => path,
+            Err(err) => bail!("{err} (create it with `tmux-layout new {name}`)"),
+        };
+
+        // Run the editor through the shell, so commands with arguments work
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(format!("{} \"$1\"", self.editor))
+            .arg("sh")
+            .arg(&path)
+            .status()
+            .with_context(|| format!("failed to run the editor ({})", self.editor))?;
+        if !status.success() {
+            bail!("the editor ({}) exited with {status}", self.editor);
+        }
+
+        let layout = match Layout::read_from_file(&path, &self.environment) {
+            Ok(layout) => layout,
+            Err(err) => bail!("{err:#} (fix it with `tmux-layout edit {name}`)"),
+        };
+        success(format!(
+            "{} is valid ({})",
+            path.display(),
+            count(layout.windows.len(), "window")
+        ));
+        Ok(())
+    }
 }
 
 /// List the available layouts.
@@ -344,5 +448,130 @@ mod tests {
         };
         command.execute(&args).unwrap();
         assert_eq!(writer.contents(), "demo\nwork\n");
+    }
+
+    fn env(vars: &[(&str, &str)]) -> Environment {
+        vars.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn new(dir: &Path, name: &str, force: bool, cwd: &str) -> Result<()> {
+        let dir = dir.to_str().unwrap();
+        let mut argv = vec!["tmux-layout", "new", "-d", dir, name];
+        if force {
+            argv.push("--force");
+        }
+        let ProgramCommand::New(args) = Program::parse_from(argv).command else {
+            unreachable!()
+        };
+        let mut command = NewCommand {
+            cwd: PathBuf::from(cwd),
+            environment: env(&[("HOME", "/h")]),
+        };
+        command.execute(&args)
+    }
+
+    fn edit(dir: &Path, name: &str, editor: &str) -> Result<()> {
+        let dir = dir.to_str().unwrap();
+        let program = Program::parse_from(["tmux-layout", "edit", "-d", dir, name]);
+        let ProgramCommand::Edit(args) = program.command else {
+            unreachable!()
+        };
+        let mut command = EditCommand {
+            editor: editor.to_string(),
+            environment: env(&[]),
+        };
+        command.execute(&args)
+    }
+
+    #[test]
+    fn new_creates_a_starter_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let layouts = dir.path().join("layouts");
+        new(&layouts, "dev", false, "/h/code").unwrap();
+
+        let layout = Layout::read_from_file(&layouts.join("dev.yml"), &env(&[])).unwrap();
+        assert_eq!(layout.session_name(), "dev");
+        assert_eq!(layout.session.cwd.as_deref(), Some("~/code"));
+        assert_eq!(layout.windows.len(), 2);
+    }
+
+    #[test]
+    fn new_quotes_values_yaml_would_misread() {
+        let dir = tempfile::tempdir().unwrap();
+        new(dir.path(), "123", false, "/srv/a: b #c").unwrap();
+
+        let layout = Layout::read_from_file(&dir.path().join("123.yml"), &env(&[])).unwrap();
+        assert_eq!(layout.session_name(), "123");
+        assert_eq!(layout.session.cwd.as_deref(), Some("/srv/a: b #c"));
+    }
+
+    #[test]
+    fn new_writes_the_home_directory_as_a_tilde() {
+        let dir = tempfile::tempdir().unwrap();
+        new(dir.path(), "home", false, "/h").unwrap();
+        let layout = Layout::read_from_file(&dir.path().join("home.yml"), &env(&[])).unwrap();
+        assert_eq!(layout.session.cwd.as_deref(), Some("~"));
+    }
+
+    #[test]
+    fn new_replaces_a_layout_only_with_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.yaml");
+        std::fs::write(&path, "mine").unwrap();
+
+        let err = new(dir.path(), "dev", false, "/h").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
+
+        new(dir.path(), "dev", true, "/h").unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("session:"));
+        assert!(!dir.path().join("dev.yml").exists());
+    }
+
+    #[test]
+    fn new_rejects_names_list_would_not_show() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = new(dir.path(), "../dev", false, "/h").unwrap_err();
+        assert!(err.to_string().contains("invalid layout name"));
+    }
+
+    #[test]
+    fn edit_checks_the_layout_after_the_editor_exits() {
+        let dir = layout_dir(LAYOUT);
+        edit(dir.path(), "demo", "true").unwrap();
+    }
+
+    #[test]
+    fn edit_runs_editors_with_arguments() {
+        let dir = layout_dir(LAYOUT);
+        let invalid = dir.path().join("invalid");
+        std::fs::write(&invalid, "windows: [{}]").unwrap();
+
+        // The editor "saves" the invalid layout over the valid one
+        let editor = format!("cp '{}'", invalid.display());
+        let err = edit(dir.path(), "demo", &editor).unwrap_err();
+        assert!(err.to_string().contains("session.name is required"));
+        assert!(err
+            .to_string()
+            .contains("fix it with `tmux-layout edit demo`"));
+    }
+
+    #[test]
+    fn edit_fails_when_the_editor_fails() {
+        let dir = layout_dir(LAYOUT);
+        let err = edit(dir.path(), "demo", "false").unwrap_err();
+        assert!(err.to_string().contains("the editor (false) exited"));
+    }
+
+    #[test]
+    fn edit_fails_for_a_missing_layout() {
+        let dir = layout_dir(LAYOUT);
+        let err = edit(dir.path(), "nope", "true").unwrap_err();
+        assert!(err.to_string().contains("layout 'nope' not found"));
+        assert!(err
+            .to_string()
+            .contains("create it with `tmux-layout new nope`"));
     }
 }

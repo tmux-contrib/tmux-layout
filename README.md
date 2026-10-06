@@ -42,12 +42,29 @@ cargo install --git https://github.com/tmux-contrib/tmux-layout
 
 ## Usage
 
+Get started in a project directory:
+
 ```sh
-tmux-layout switch <name>    # apply a layout
-tmux-layout list             # list available layouts
+tmux-layout new dev      # create ~/.config/tmux/layouts/dev.yml, opening here
+tmux-layout edit dev     # declare your windows and panes
+tmux-layout switch dev   # open them
+```
+
+```sh
+tmux-layout switch <name>        # apply a layout
+tmux-layout new <name> [--force] # create a commented starter layout
+tmux-layout edit <name>          # open a layout in $VISUAL or $EDITOR, then check it
+tmux-layout list                 # list available layouts
 tmux-layout --help
 tmux-layout switch --help
 ```
+
+- `new` writes a starter layout whose session is named `<name>` and opens in
+  the current directory. It never replaces an existing layout unless `--force`
+  is given.
+- `edit` checks the layout the same way `switch` reads it once your editor
+  exits, so mistakes show up right away instead of the next time you switch.
+  Editors with arguments work, e.g. `EDITOR="code --wait"`.
 
 Layouts are read from `$XDG_CONFIG_HOME/tmux/layouts` (default
 `~/.config/tmux/layouts`). Use `--layout-dir` (`-d`) or `TMUX_LAYOUT_DIR` to
@@ -56,7 +73,8 @@ that are run.
 
 ## Layout file
 
-`~/.config/tmux/layouts/dev.yml`:
+`tmux-layout new` writes a commented starter layout. A complete one looks
+like this, in `~/.config/tmux/layouts/dev.yml`:
 
 ```yaml
 session:

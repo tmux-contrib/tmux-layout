@@ -1,7 +1,8 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// Workspace holds a layout directory, a home directory and the socket directory of a tmux
 /// server of its own, which is killed when the workspace is dropped.
@@ -167,10 +168,20 @@ fn switch_fails_for_an_invalid_layout() {
 // The tests below run a tmux server. Attaching fails without a terminal, so they check the
 // session after `switch` ran instead of its exit status.
 
-/// Returns the working directory of `pane` in the server of `ws`.
-fn pane_path(ws: &Workspace, pane: &str) -> PathBuf {
-    let lines = ws.tmux(&["display-message", "-t", pane, "-p", "#{pane_current_path}"]);
-    PathBuf::from(&lines[0])
+/// Asserts that `pane` in the server of `ws` runs in `expected`. On Linux, tmux reads the
+/// directory of the process in the pane, which may not have changed to it yet right after the
+/// pane was created, so this waits for it for a while.
+fn assert_pane_path(ws: &Workspace, pane: &str, expected: &Path) {
+    let mut path = PathBuf::new();
+    for _ in 0..50 {
+        let lines = ws.tmux(&["display-message", "-t", pane, "-p", "#{pane_current_path}"]);
+        path = PathBuf::from(&lines[0]);
+        if path == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(path, expected, "working directory of {pane}");
 }
 
 #[test]
@@ -260,9 +271,9 @@ windows:
     );
     ws.tmux_layout().args(["switch", "cwd"]).output().unwrap();
 
-    assert_eq!(pane_path(&ws, "=t-cwd:session.0"), s);
-    assert_eq!(pane_path(&ws, "=t-cwd:window.0"), w);
-    assert_eq!(pane_path(&ws, "=t-cwd:window.1"), p);
+    assert_pane_path(&ws, "=t-cwd:session.0", &s);
+    assert_pane_path(&ws, "=t-cwd:window.0", &w);
+    assert_pane_path(&ws, "=t-cwd:window.1", &p);
 }
 
 #[test]

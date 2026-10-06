@@ -4,7 +4,7 @@
 > file once, then jump back into the same workspace any time with a single
 > command — Nix dev shell aware, env-substitution included.
 
-[![CI](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml/badge.svg)](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/tmux-contrib/tmux-layout)](https://github.com/tmux-contrib/tmux-layout/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml/badge.svg)](https://github.com/tmux-contrib/tmux-layout/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/tmux-contrib/tmux-layout)](https://github.com/tmux-contrib/tmux-layout/releases) [![Rust](https://img.shields.io/badge/built_with-Rust-dea584?logo=rust)](https://www.rust-lang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ```sh
 tmux-layout switch dev

@@ -1,63 +1,54 @@
 {
-  description = "tmux-layout development shell";
+  description = "tmux-layout - declare tmux sessions, windows and panes in YAML";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      rust-overlay,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        runtimeDeps = with pkgs; [
-          tmux
-          yq-go
-          gettext
-        ];
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
+        manifest = (pkgs.lib.importTOML ./Cargo.toml).package;
+        rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in
       {
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "tmux-layout";
-          version = pkgs.lib.removeSuffix "\n" (builtins.readFile ./version.txt);
-          src = ./.;
-
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-
-          installPhase = ''
-            mkdir -p $out/share/tmux-layout $out/bin
-            cp tmux-layout version.txt $out/share/tmux-layout/
-            cp -r scripts $out/share/tmux-layout/
-            chmod +x $out/share/tmux-layout/tmux-layout
-            makeWrapper $out/share/tmux-layout/tmux-layout $out/bin/tmux-layout \
-              --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
-          '';
-
+        # tmux is not bundled: the client must match the version of the user's tmux server
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = manifest.name;
+          inherit (manifest) version;
+          cargoLock.lockFile = ./Cargo.lock;
+          src = pkgs.lib.cleanSource ./.;
+          doCheck = false;
           meta = with pkgs.lib; {
-            description = "Apply YAML-defined tmux layouts";
-            homepage = "https://github.com/tmux-contrib/tmux-layout";
+            inherit (manifest) description;
+            inherit (manifest) homepage;
             license = licenses.mit;
-            maintainers = [ ];
-            mainProgram = "tmux-layout";
+            mainProgram = manifest.name;
             platforms = platforms.unix;
           };
         };
 
         devShells.default = pkgs.mkShell {
-          name = "tmux-layout";
-          packages = with pkgs; [
-            bash
-            tmux
-            yq-go
-            gettext
-            bats
-            shellcheck
+          inherit (manifest) name;
+          packages = [
+            rust-toolchain
+            pkgs.tmux
           ];
         };
       }

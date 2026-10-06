@@ -12,25 +12,9 @@ tmux-layout switch dev
 
 ## Install
 
-### Zsh plugin
+A single binary; the only runtime dependency is `tmux`.
 
-```zsh
-# zinit
-zinit light tmux-contrib/tmux-layout
-
-# antidote (in ~/.zsh_plugins.txt)
-tmux-contrib/tmux-layout
-
-# oh-my-zsh
-git clone https://github.com/tmux-contrib/tmux-layout \
-  "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/tmux-layout"
-# then add `tmux-layout` to plugins=(...) in ~/.zshrc
-```
-
-The plugin file simply prepends the repo directory to `$PATH` so the
-`tmux-layout` script becomes available as a command.
-
-### Nix
+**Nix:**
 
 ```sh
 nix run github:tmux-contrib/tmux-layout -- switch dev
@@ -38,21 +22,23 @@ nix run github:tmux-contrib/tmux-layout -- switch dev
 nix profile install github:tmux-contrib/tmux-layout
 ```
 
-### Manual
+**Download:** each [release](https://github.com/tmux-contrib/tmux-layout/releases/latest)
+has a binary per platform: `tmux-layout-aarch64-apple-darwin`,
+`tmux-layout-x86_64-apple-darwin`, `tmux-layout-x86_64-unknown-linux-musl`
+and `tmux-layout-aarch64-unknown-linux-musl`. The Linux binaries are static
+and run on any distribution.
 
 ```sh
-git clone https://github.com/tmux-contrib/tmux-layout
-ln -s "$PWD/tmux-layout/tmux-layout" /usr/local/bin/tmux-layout
+curl -fsSL --create-dirs -o ~/.local/bin/tmux-layout \
+  https://github.com/tmux-contrib/tmux-layout/releases/latest/download/tmux-layout-aarch64-apple-darwin
+chmod +x ~/.local/bin/tmux-layout
 ```
 
-### Dependencies
+**Cargo** (from source):
 
-- Bash 4.4+
-- `tmux`
-- [`yq`](https://github.com/mikefarah/yq) (Go, mikefarah/yq) —
-  `brew install yq` or `nix profile install nixpkgs#yq-go`
-- `envsubst` (from gettext) — preinstalled on most Linux/Nix systems;
-  macOS: `brew install gettext`
+```sh
+cargo install --git https://github.com/tmux-contrib/tmux-layout
+```
 
 ## Usage
 
@@ -62,6 +48,11 @@ tmux-layout list             # list available layouts
 tmux-layout --help
 tmux-layout switch --help
 ```
+
+Layouts are read from `$XDG_CONFIG_HOME/tmux/layouts` (default
+`~/.config/tmux/layouts`). Use `--layout-dir` (`-d`) or `TMUX_LAYOUT_DIR` to
+read them from elsewhere, and `--verbose` (`-v`) to print the tmux commands
+that are run.
 
 ## Layout file
 
@@ -99,15 +90,16 @@ created via `tmux split-window`.
 - **Working directory**: `cwd:` may be set at session, window, or pane
   level. Precedence is **pane > window > session**, so a window-level
   `cwd` applies to all its panes unless a pane overrides it. A leading
-  `~` expands to `$HOME`; `${VAR}` forms are expanded via `envsubst`
-  (see below); anything else is passed to `tmux -c` as-is (absolute or
+  `~` expands to `$HOME`; `$VAR` and `${VAR}` are substituted (see
+  below); anything else is passed to `tmux -c` as-is (absolute or
   relative to wherever tmux is invoked).
 - **Nix dev shells**: if `IN_NIX_SHELL` is set, every pane command is
   run as `nix develop -c "$SHELL" -c "<cmd>"` so tools defined in the
   dev shell remain available and shell features (pipes, `&&`, aliases)
   work inside the pane command.
-- **Env substitution**: `${VAR}` references in the YAML are expanded
-  via `envsubst` before parsing, e.g.:
+- **Env substitution**: `$VAR` and `${VAR}` references in the YAML are
+  replaced with environment variables before parsing, like `envsubst`
+  (unset variables become empty), e.g.:
 
   ```yaml
   session:
@@ -119,8 +111,9 @@ created via `tmux split-window`.
   ```
 
   Substitution happens at parse time, not at command run time, so any
-  `$VAR` in a `command:` is expanded by `envsubst` (not by the shell at
-  runtime).
+  `$VAR` in a `command:` is expanded when the layout is read (not by the
+  shell at runtime). Other forms, like `${EDITOR:-vim}`, are left for the
+  pane's shell to expand.
 
 ## License
 

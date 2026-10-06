@@ -1,0 +1,24 @@
+[package]
+name = "tmux-layout"
+version = "0.1.0"
+edition = "2021"
+description = "Declare tmux sessions, windows and panes in YAML, and switch to them with one command"
+license = "MIT"
+documentation = "https://github.com/tmux-contrib/tmux-layout"
+homepage = "https://github.com/tmux-contrib/tmux-layout"
+repository = "https://github.com/tmux-contrib/tmux-layout"
+# The tmux-layout crate on crates.io belongs to another project; releases ship as binaries
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env", "string"] }
+console = "0.16"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml_ng = "0.10.0"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+indoc = "2.0.7"
+predicates = "3.1.4"
+tempfile = "3.27.0"

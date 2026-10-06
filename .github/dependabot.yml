@@ -6,12 +6,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
     groups:
-      all-actions:
+      all-github-actions:
         patterns: ["*"]
     labels:
       - "dependencies"
-      - "github-actions"
       - "auto-merge"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-and-patch:
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
     commit-message:
       prefix: "chore"
       include: "scope"

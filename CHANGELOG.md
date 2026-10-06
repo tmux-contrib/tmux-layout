@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.1.0...v0.2.0) (2026-10-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* the zsh plugin is removed, since it only added the repository to PATH. Install the binary with Nix, from a release, or with cargo install --git instead.
+
+### Features
+
+* rewrite the CLI in Rust ([#6](https://github.com/tmux-contrib/tmux-layout/issues/6)) ([8d53d7c](https://github.com/tmux-contrib/tmux-layout/commit/8d53d7c7b9e11cd29df335e9254969818b86e67b))
+
 ## [0.1.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.0.1...v0.1.0) (2026-05-13)
 
 

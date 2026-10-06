@@ -126,22 +126,6 @@ fn pane_args(mut command: Vec<String>, pane: &PanePlan) -> Vec<String> {
     command
 }
 
-/// List the available layouts.
-pub struct ListCommand {
-    /// Writer used to output the layout names.
-    pub writer: Box<dyn Write>,
-}
-
-impl ListCommand {
-    /// Execute the ListCommand with the provided arguments.
-    pub fn execute(&mut self, args: &ListCommandArgs) -> Result<()> {
-        for name in list(&args.parent.layout_dir)? {
-            writeln!(self.writer, "{name}")?;
-        }
-        Ok(())
-    }
-}
-
 /// Returns `value` as a YAML scalar, quoted if it needs to be.
 fn yaml_scalar(value: &str) -> Result<String> {
     Ok(serde_yaml_ng::to_string(value)?.trim_end().to_string())
@@ -237,6 +221,22 @@ impl EditCommand {
             path.display(),
             count(layout.windows.len(), "window")
         ));
+        Ok(())
+    }
+}
+
+/// List the available layouts.
+pub struct ListCommand {
+    /// Writer used to output the layout names.
+    pub writer: Box<dyn Write>,
+}
+
+impl ListCommand {
+    /// Execute the ListCommand with the provided arguments.
+    pub fn execute(&mut self, args: &ListCommandArgs) -> Result<()> {
+        for name in list(&args.parent.layout_dir)? {
+            writeln!(self.writer, "{name}")?;
+        }
         Ok(())
     }
 }

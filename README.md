@@ -52,9 +52,9 @@ tmux-layout switch dev   # open them
 
 ```sh
 tmux-layout switch <name>        # apply a layout
-tmux-layout list                 # list available layouts
 tmux-layout new <name> [--force] # create a commented starter layout
 tmux-layout edit <name>          # open a layout in $VISUAL or $EDITOR, then check it
+tmux-layout list                 # list available layouts
 tmux-layout --help
 tmux-layout switch --help
 ```

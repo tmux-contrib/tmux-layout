@@ -39,11 +39,6 @@ fn run(program: Program) -> Result<()> {
             let mut command = SwitchCommand { tmux, environment };
             command.execute(&args)
         }
-        ProgramCommand::List(args) => {
-            let writer = Box::new(std::io::stdout());
-            let mut command = ListCommand { writer };
-            command.execute(&args)
-        }
         ProgramCommand::New(args) => {
             let cwd = std::env::current_dir().context("failed to read the current directory")?;
             let environment = environment();
@@ -61,6 +56,11 @@ fn run(program: Program) -> Result<()> {
                 editor,
                 environment,
             };
+            command.execute(&args)
+        }
+        ProgramCommand::List(args) => {
+            let writer = Box::new(std::io::stdout());
+            let mut command = ListCommand { writer };
             command.execute(&args)
         }
     }

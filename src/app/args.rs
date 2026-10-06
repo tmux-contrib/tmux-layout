@@ -11,15 +11,15 @@ const SWITCH_EXAMPLES: &str = "Examples:
   tmux-layout switch dev           # ~/.config/tmux/layouts/dev.yml
   tmux-layout switch \"$PROJECT\"    # a layout named after a variable
   tmux-layout switch -v dev        # print the tmux commands it runs";
-const LIST_EXAMPLES: &str = "Examples:
-  tmux-layout list                                 # one name per line
-  tmux-layout switch \"$(tmux-layout list | fzf)\"  # pick one";
 const NEW_EXAMPLES: &str = "Examples:
   tmux-layout new dev          # a layout opening in the current directory
   tmux-layout new dev --force  # start over";
 const EDIT_EXAMPLES: &str = "Examples:
   tmux-layout edit dev                       # in $VISUAL or $EDITOR
   EDITOR=\"code --wait\" tmux-layout edit dev  # in VS Code";
+const LIST_EXAMPLES: &str = "Examples:
+  tmux-layout list                                 # one name per line
+  tmux-layout switch \"$(tmux-layout list | fzf)\"  # pick one";
 
 /// Program is the main entry point for the tmux-layout CLI.
 #[derive(Debug, Parser)]
@@ -100,23 +100,13 @@ pub enum ProgramCommand {
     )]
     Switch(SwitchCommandArgs),
 
-    /// List the available layouts.
-    #[command(
-        name = "list",
-        after_help = LIST_EXAMPLES,
-        about = "List the available layouts.",
-        long_about = "Print the name of every *.yml and *.yaml file in the layout directory, one per line.",
-        next_display_order = 2
-    )]
-    List(ListCommandArgs),
-
     /// Create a starter layout.
     #[command(
         name = "new",
         after_help = NEW_EXAMPLES,
         about = "Create a starter layout.",
         long_about = "Write a commented starter layout to <NAME>.yml in the layout directory, with the session named <NAME> and opening in the current directory. An existing layout is never replaced unless --force is given.",
-        next_display_order = 3
+        next_display_order = 2
     )]
     New(NewCommandArgs),
 
@@ -126,9 +116,19 @@ pub enum ProgramCommand {
         after_help = EDIT_EXAMPLES,
         about = "Open a layout in your editor, then check it.",
         long_about = "Open the layout <NAME>.yml (or <NAME>.yaml) in $VISUAL or $EDITOR (vi if neither is set), and check that it is valid once the editor exits, the same way `switch` reads it.",
-        next_display_order = 4
+        next_display_order = 3
     )]
     Edit(EditCommandArgs),
+
+    /// List the available layouts.
+    #[command(
+        name = "list",
+        after_help = LIST_EXAMPLES,
+        about = "List the available layouts.",
+        long_about = "Print the name of every *.yml and *.yaml file in the layout directory, one per line.",
+        next_display_order = 4
+    )]
+    List(ListCommandArgs),
 }
 
 impl ProgramCommand {
@@ -136,9 +136,9 @@ impl ProgramCommand {
     pub fn parent(&self) -> &ProgramArgs {
         match self {
             ProgramCommand::Switch(args) => &args.parent,
-            ProgramCommand::List(args) => &args.parent,
             ProgramCommand::New(args) => &args.parent,
             ProgramCommand::Edit(args) => &args.parent,
+            ProgramCommand::List(args) => &args.parent,
         }
     }
 }
@@ -153,14 +153,6 @@ pub struct SwitchCommandArgs {
     /// Name of the layout to apply.
     #[arg(help = "Layout name (the file name without extension).")]
     pub name: String,
-}
-
-/// ListCommandArgs defines the arguments for the ListCommand.
-#[derive(Debug, Args)]
-pub struct ListCommandArgs {
-    /// Shared global flags.
-    #[command(flatten)]
-    pub parent: ProgramArgs,
 }
 
 /// NewCommandArgs defines the arguments for the NewCommand.
@@ -189,6 +181,14 @@ pub struct EditCommandArgs {
     /// Name of the layout to edit.
     #[arg(help = "Layout name (the file name without extension).")]
     pub name: String,
+}
+
+/// ListCommandArgs defines the arguments for the ListCommand.
+#[derive(Debug, Args)]
+pub struct ListCommandArgs {
+    /// Shared global flags.
+    #[command(flatten)]
+    pub parent: ProgramArgs,
 }
 
 #[cfg(test)]

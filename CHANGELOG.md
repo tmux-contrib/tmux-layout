@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.2.0...v0.3.0) (2026-10-06)
+
+
+### Features
+
+* add new and edit commands ([#11](https://github.com/tmux-contrib/tmux-layout/issues/11)) ([4614983](https://github.com/tmux-contrib/tmux-layout/commit/46149832a8e7a5b00c789504a8d33ecfc640a625)), closes [#8](https://github.com/tmux-contrib/tmux-layout/issues/8) [#9](https://github.com/tmux-contrib/tmux-layout/issues/9)
+
 ## [0.2.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.1.0...v0.2.0) (2026-10-06)
 
 

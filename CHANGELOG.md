@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.3.0...v0.4.0) (2026-10-06)
+
+
+### Features
+
+* add save command to capture a tmux session as a layout ([#13](https://github.com/tmux-contrib/tmux-layout/issues/13)) ([612d260](https://github.com/tmux-contrib/tmux-layout/commit/612d26010ccb5a306121494cd030c314735d6534)), closes [#10](https://github.com/tmux-contrib/tmux-layout/issues/10)
+
 ## [0.3.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.2.0...v0.3.0) (2026-10-06)
 
 

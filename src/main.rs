@@ -58,6 +58,12 @@ fn run(program: Program) -> Result<()> {
             };
             command.execute(&args)
         }
+        ProgramCommand::Save(args) => {
+            let tmux = Box::new(Client::new());
+            let environment = environment();
+            let mut command = SaveCommand { tmux, environment };
+            command.execute(&args)
+        }
         ProgramCommand::List(args) => {
             let writer = Box::new(std::io::stdout());
             let mut command = ListCommand { writer };

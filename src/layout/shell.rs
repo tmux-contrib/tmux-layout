@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Environment variables, by name.
 pub type Environment = HashMap<String, String>;
@@ -61,6 +62,17 @@ pub fn expand_home(path: &str, env: &Environment) -> String {
     }
 }
 
+/// Returns `path` with the home directory in `env` written as `~`, so a layout works for the
+/// same directory on other machines.
+pub fn tilde(path: &Path, env: &Environment) -> String {
+    let rest = var(env, "HOME").and_then(|home| path.strip_prefix(home).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
 /// Quotes `value` for POSIX shells when it holds anything but safe characters, so it survives
 /// being parsed again unchanged.
 pub fn quote(value: &str) -> String {
@@ -69,6 +81,31 @@ pub fn quote(value: &str) -> String {
         return value.to_string();
     }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Splits `text` into words like a shell: on blanks outside quotes. Single quotes keep what
+/// they hold as is; elsewhere, a backslash escapes the next character. This reads what
+/// [`quote`] writes, and the commands tmux prints, like `"tig \$DIR"`.
+pub fn words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut open: Option<char> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (open, c) {
+            (Some('\''), '\'') | (Some('"'), '"') => open = None,
+            (Some('\''), c) => word.get_or_insert_default().push(c),
+            (_, '\\') => word.get_or_insert_default().extend(chars.next()),
+            (None, '\'' | '"') => {
+                open = Some(c);
+                word.get_or_insert_default();
+            }
+            (None, c) if c.is_whitespace() => words.extend(word.take()),
+            (_, c) => word.get_or_insert_default().push(c),
+        }
+    }
+    words.extend(word);
+    words
 }
 
 /// Returns the shell command tmux runs in a pane for `command`. In a Nix dev shell, it runs
@@ -80,6 +117,16 @@ pub fn pane_command(command: &str, env: &Environment) -> String {
 
     let shell = var(env, "SHELL").unwrap_or("bash");
     format!("nix develop -c {} -c {}", quote(shell), quote(command))
+}
+
+/// Returns the command [`pane_command`] ran through `nix develop` in `command`, or `command`
+/// itself when it doesn't.
+pub fn unwrap_pane_command(command: &str) -> String {
+    let words = words(command);
+    match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["nix", "develop", "-c", _, "-c", inner] => inner.to_string(),
+        _ => command.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -162,5 +209,50 @@ mod tests {
     fn pane_command_defaults_to_bash_inside_a_nix_shell() {
         let env = env(&[("IN_NIX_SHELL", "pure")]);
         assert_eq!(pane_command("tig", &env), "nix develop -c bash -c tig");
+    }
+
+    #[test]
+    fn tilde_writes_the_home_directory_as_a_tilde() {
+        let env = env(&[("HOME", "/h")]);
+        assert_eq!(tilde(Path::new("/h"), &env), "~");
+        assert_eq!(tilde(Path::new("/h/code/app"), &env), "~/code/app");
+        assert_eq!(tilde(Path::new("/hx/code"), &env), "/hx/code");
+        assert_eq!(tilde(Path::new("/h/code"), &Environment::new()), "/h/code");
+    }
+
+    #[test]
+    fn words_splits_on_blanks_outside_quotes() {
+        assert_eq!(words("  tig  --all "), vec!["tig", "--all"]);
+        assert_eq!(
+            words(r#"a 'b c' "d e" f\ g ''"#),
+            vec!["a", "b c", "d e", "f g", ""]
+        );
+        assert!(words("").is_empty());
+    }
+
+    #[test]
+    fn words_reads_the_escaping_of_tmux() {
+        assert_eq!(
+            words(r#""sleep 1 # \$HOME \"q\" 'it' \\ ~""#),
+            vec![r#"sleep 1 # $HOME "q" 'it' \ ~"#]
+        );
+        assert_eq!(words(r"\~/bin/x"), vec!["~/bin/x"]);
+    }
+
+    #[test]
+    fn words_reads_what_quote_writes() {
+        for value in ["tig", "tig --all | less", "it's", "", r"a\b"] {
+            assert_eq!(words(&quote(value)), vec![value]);
+        }
+    }
+
+    #[test]
+    fn unwrap_pane_command_undoes_pane_command() {
+        let env = env(&[("IN_NIX_SHELL", "impure"), ("SHELL", "/bin/zsh")]);
+        for command in ["tig", "tig --all | less", "echo 'hi'"] {
+            assert_eq!(unwrap_pane_command(&pane_command(command, &env)), command);
+        }
+        assert_eq!(unwrap_pane_command("tig --all"), "tig --all");
+        assert_eq!(unwrap_pane_command("nix develop"), "nix develop");
     }
 }

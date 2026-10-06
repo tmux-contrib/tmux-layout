@@ -6,7 +6,10 @@ use std::path::PathBuf;
 const PROGRAM_HELP: &str = "Get started:
   tmux-layout new dev     # create ~/.config/tmux/layouts/dev.yml
   tmux-layout edit dev    # declare your windows and panes
-  tmux-layout switch dev  # open them";
+  tmux-layout switch dev  # open them
+
+Or, inside tmux, save the session you are in:
+  tmux-layout save dev";
 const SWITCH_EXAMPLES: &str = "Examples:
   tmux-layout switch dev           # ~/.config/tmux/layouts/dev.yml
   tmux-layout switch \"$PROJECT\"    # a layout named after a variable
@@ -17,6 +20,10 @@ const NEW_EXAMPLES: &str = "Examples:
 const EDIT_EXAMPLES: &str = "Examples:
   tmux-layout edit dev                       # in $VISUAL or $EDITOR
   EDITOR=\"code --wait\" tmux-layout edit dev  # in VS Code";
+const SAVE_EXAMPLES: &str = "Examples:
+  tmux-layout save dev          # the current session, inside tmux
+  tmux-layout save dev -t work  # the session named work
+  tmux-layout save dev --force  # replace the saved layout";
 const LIST_EXAMPLES: &str = "Examples:
   tmux-layout list                                 # one name per line
   tmux-layout switch \"$(tmux-layout list | fzf)\"  # pick one";
@@ -120,13 +127,23 @@ pub enum ProgramCommand {
     )]
     Edit(EditCommandArgs),
 
+    /// Save a tmux session as a layout.
+    #[command(
+        name = "save",
+        after_help = SAVE_EXAMPLES,
+        about = "Save a tmux session as a layout.",
+        long_about = "Write the current tmux session, or the one given with --target, to <NAME>.yml in the layout directory, so `tmux-layout switch <NAME>` opens it again.\n\nThe names, layout and working directory of its windows and panes are saved, and the command each pane was started with or runs, unless it is a shell. Only the name of a running program is known, not its arguments. An existing layout is never replaced unless --force is given.",
+        next_display_order = 4
+    )]
+    Save(SaveCommandArgs),
+
     /// List the available layouts.
     #[command(
         name = "list",
         after_help = LIST_EXAMPLES,
         about = "List the available layouts.",
         long_about = "Print the name of every *.yml and *.yaml file in the layout directory, one per line.",
-        next_display_order = 4
+        next_display_order = 5
     )]
     List(ListCommandArgs),
 }
@@ -138,6 +155,7 @@ impl ProgramCommand {
             ProgramCommand::Switch(args) => &args.parent,
             ProgramCommand::New(args) => &args.parent,
             ProgramCommand::Edit(args) => &args.parent,
+            ProgramCommand::Save(args) => &args.parent,
             ProgramCommand::List(args) => &args.parent,
         }
     }
@@ -183,6 +201,31 @@ pub struct EditCommandArgs {
     pub name: String,
 }
 
+/// SaveCommandArgs defines the arguments for the SaveCommand.
+#[derive(Debug, Args)]
+pub struct SaveCommandArgs {
+    /// Shared global flags.
+    #[command(flatten)]
+    pub parent: ProgramArgs,
+
+    /// Name of the layout to write.
+    #[arg(help = "Layout name (the file name without extension).")]
+    pub name: String,
+
+    /// Session to save, instead of the current one.
+    #[arg(
+        help = "Session to save (default: the current one).",
+        long,
+        short,
+        value_name = "SESSION"
+    )]
+    pub target: Option<String>,
+
+    /// Replace an existing layout.
+    #[arg(help = "Replace the layout if it exists.", long, short)]
+    pub force: bool,
+}
+
 /// ListCommandArgs defines the arguments for the ListCommand.
 #[derive(Debug, Args)]
 pub struct ListCommandArgs {
@@ -224,6 +267,17 @@ mod tests {
             panic!("expected new");
         };
         assert_eq!(args.name, "dev");
+        assert!(args.force);
+    }
+
+    #[test]
+    fn save_parses_the_target_and_force() {
+        let program = Program::parse_from(["tmux-layout", "save", "dev", "-t", "work", "-f"]);
+        let ProgramCommand::Save(args) = program.command else {
+            panic!("expected save");
+        };
+        assert_eq!(args.name, "dev");
+        assert_eq!(args.target.as_deref(), Some("work"));
         assert!(args.force);
     }
 

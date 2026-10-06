@@ -131,15 +131,24 @@ fn yaml_scalar(value: &str) -> Result<String> {
     Ok(serde_yaml_ng::to_string(value)?.trim_end().to_string())
 }
 
-/// Returns `path` with the home directory in `env` written as `~`, so the layout works for
-/// the same directory on other machines.
-fn tilde(path: &Path, env: &Environment) -> String {
-    let rest = var(env, "HOME").and_then(|home| path.strip_prefix(home).ok());
-    match rest {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
+/// Returns the file to write the layout `name` in `dir` to. An existing layout is only
+/// replaced with `force`.
+fn new_path(dir: &Path, name: &str, force: bool) -> Result<PathBuf> {
+    check_name(name)?;
+    match find(dir, name) {
+        Ok(path) if !force => bail!(
+            "{} already exists (edit it with `tmux-layout edit {name}`, or replace it with --force)",
+            path.display()
+        ),
+        Ok(path) => Ok(path),
+        Err(_) => Ok(dir.join(format!("{name}.yml"))),
     }
+}
+
+/// Writes `layout` to `path` in `dir`, creating `dir` if needed.
+fn write(dir: &Path, path: &Path, layout: &str) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    std::fs::write(path, layout).with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// Create a starter layout.
@@ -154,15 +163,7 @@ impl NewCommand {
     /// Execute the NewCommand with the provided arguments.
     pub fn execute(&mut self, args: &NewCommandArgs) -> Result<()> {
         let (dir, name) = (&args.parent.layout_dir, &args.name);
-        check_name(name)?;
-        let path = match find(dir, name) {
-            Ok(path) if !args.force => bail!(
-                "{} already exists (edit it with `tmux-layout edit {name}`, or replace it with --force)",
-                path.display()
-            ),
-            Ok(path) => path,
-            Err(_) => dir.join(format!("{name}.yml")),
-        };
+        let path = new_path(dir, name, args.force)?;
 
         let layout = STARTER_LAYOUT
             .replace("{{name}}", &yaml_scalar(name)?)
@@ -170,10 +171,7 @@ impl NewCommand {
                 "{{cwd}}",
                 &yaml_scalar(&tilde(&self.cwd, &self.environment))?,
             );
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("failed to create {}", dir.display()))?;
-        std::fs::write(&path, layout)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        write(dir, &path, &layout)?;
 
         success(format!("Created {}", path.display()));
         info(format!(
@@ -220,6 +218,48 @@ impl EditCommand {
             "{} is valid ({})",
             path.display(),
             count(layout.windows.len(), "window")
+        ));
+        Ok(())
+    }
+}
+
+/// Save a tmux session as a layout.
+pub struct SaveCommand {
+    /// Tmux the session is read from.
+    pub tmux: Box<dyn Tmux>,
+    /// Environment telling whether this runs inside tmux, and holding the home directory.
+    pub environment: Environment,
+}
+
+impl SaveCommand {
+    /// Execute the SaveCommand with the provided arguments.
+    pub fn execute(&mut self, args: &SaveCommandArgs) -> Result<()> {
+        let (dir, name) = (&args.parent.layout_dir, &args.name);
+        let path = new_path(dir, name, args.force)?;
+
+        // Without a target, tmux lists the session this runs in
+        let mut command = strings(["list-panes", "-s", "-F", PANE_FORMAT]);
+        match &args.target {
+            Some(target) => command.extend(strings(["-t", target])),
+            None if var(&self.environment, "TMUX").is_none() => bail!(
+                "not inside tmux; run `tmux-layout save {name}` in a tmux pane, or name a session with --target"
+            ),
+            None => {}
+        }
+        let layout = Layout::capture(&self.tmux.run(&command)?, &self.environment)?;
+        let text = format!(
+            "# Open this layout with `tmux-layout switch {name}`.\n\n{}",
+            serde_yaml_ng::to_string(&layout)?
+        );
+        write(dir, &path, &text)?;
+
+        success(format!(
+            "Saved {} ({})",
+            path.display(),
+            count(layout.windows.len(), "window")
+        ));
+        info(format!(
+            "adjust it with `tmux-layout edit {name}`, then open it with `tmux-layout switch {name}`"
         ));
         Ok(())
     }
@@ -318,6 +358,7 @@ mod tests {
                     Self::next(&self.panes)
                 )),
                 "split-window" => Ok(format!("%{}", Self::next(&self.panes))),
+                "list-panes" => Ok(LIST_PANES.replace('|', "\x1f")),
                 _ => Ok(String::new()),
             }
         }
@@ -343,6 +384,13 @@ mod tests {
               - command: nvim
                 cwd: /src
           - name: notes
+    "};
+
+    /// What tmux lists for a session like [`LAYOUT`], fields separated with `|`.
+    const LIST_PANES: &str = indoc! {"
+        demo|@1|editor|0|tiled-ish|/h/code|tig|tig|git|host
+        demo|@1|editor|0|tiled-ish|/src||nvim|host|host
+        demo|@2|notes|0|single|/h/code||zsh|host|host
     "};
 
     fn layout_dir(layout: &str) -> tempfile::TempDir {
@@ -535,6 +583,71 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = new(dir.path(), "../dev", false, "/h").unwrap_err();
         assert!(err.to_string().contains("invalid layout name"));
+    }
+
+    fn save(tmux: &FakeTmux, dir: &Path, argv: &[&str], env: &[(&str, &str)]) -> Result<()> {
+        let dir = dir.to_str().unwrap();
+        let argv = [&["tmux-layout", "save", "-d", dir], argv].concat();
+        let ProgramCommand::Save(args) = Program::parse_from(argv).command else {
+            unreachable!()
+        };
+        let mut command = SaveCommand {
+            tmux: Box::new(tmux.clone()),
+            environment: self::env(env),
+        };
+        command.execute(&args)
+    }
+
+    const IN_TMUX: [(&str, &str); 2] = [("TMUX", "/tmp/tmux-501/default,1,0"), ("HOME", "/h")];
+
+    #[test]
+    fn save_writes_the_current_session_inside_tmux() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmux = FakeTmux::default();
+        save(&tmux, dir.path(), &["copy"], &IN_TMUX).unwrap();
+        assert_eq!(
+            tmux.calls(),
+            vec![format!("list-panes -s -F {PANE_FORMAT}")]
+        );
+
+        let text = std::fs::read_to_string(dir.path().join("copy.yml")).unwrap();
+        assert!(text.starts_with("# Open this layout with `tmux-layout switch copy`."));
+        let expected = Layout::parse(&LAYOUT.replace("tiled", "tiled-ish")).unwrap();
+        assert_eq!(Layout::parse(&text).unwrap(), expected);
+    }
+
+    #[test]
+    fn save_reads_the_target_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmux = FakeTmux::default();
+        save(&tmux, dir.path(), &["copy", "-t", "work"], &[]).unwrap();
+        assert_eq!(
+            tmux.calls(),
+            vec![format!("list-panes -s -F {PANE_FORMAT} -t work")]
+        );
+    }
+
+    #[test]
+    fn save_fails_outside_tmux_without_a_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmux = FakeTmux::default();
+        let err = save(&tmux, dir.path(), &["copy"], &[]).unwrap_err();
+        assert!(err.to_string().contains("not inside tmux"));
+        assert!(err.to_string().contains("--target"));
+        assert!(tmux.calls().is_empty());
+    }
+
+    #[test]
+    fn save_replaces_a_layout_only_with_force() {
+        let dir = layout_dir("mine");
+        let tmux = FakeTmux::default();
+        let err = save(&tmux, dir.path(), &["demo"], &IN_TMUX).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+        assert!(tmux.calls().is_empty());
+
+        save(&tmux, dir.path(), &["demo", "--force"], &IN_TMUX).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("demo.yml")).unwrap();
+        assert!(text.contains("session:"));
     }
 
     #[test]

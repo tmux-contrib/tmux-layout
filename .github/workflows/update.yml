@@ -1,10 +1,8 @@
 name: Update Flake Locks
-
 on:
   schedule:
     - cron: "0 0 * * 1"
   workflow_dispatch:
-
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -15,14 +13,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v23
-
-
       - name: Update root flake.lock
         uses: DeterminateSystems/update-flake-lock@v29
         with:
+          token: ${{ steps.app-token.outputs.token }}
           pr-title: "chore(flake): update flake.lock"
           pr-labels: |
             dependencies

@@ -1,0 +1,14 @@
+session:
+  name: my-session-name
+  cwd: ~/code
+windows:
+  - name: my-window-name
+    cwd: ~/code/myapp
+    panes:
+      - name: my-tig-pane
+        command: "tig"
+      - name: my-claude-pane
+        command: "claude"
+      - name: my-nvim-pane
+        command: "nvim"
+        cwd: ~/code/myapp/src

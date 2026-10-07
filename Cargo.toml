@@ -1,6 +1,6 @@
 [package]
 name = "tmux-layout"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Declare tmux sessions, windows and panes in YAML, and switch to them with one command"
 license = "MIT"

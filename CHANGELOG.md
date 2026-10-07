@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.4.0...v0.5.0) (2026-10-07)
+
+
+### Features
+
+* show list as a table and offer to re-open invalid layouts in edit ([#15](https://github.com/tmux-contrib/tmux-layout/issues/15)) ([fb4fdc3](https://github.com/tmux-contrib/tmux-layout/commit/fb4fdc3e400f44e76cf735690ac6d040d4f92eb2))
+
 ## [0.4.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.3.0...v0.4.0) (2026-10-06)
 
 

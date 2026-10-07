@@ -72,7 +72,13 @@ tmux-layout switch --help
   is given.
 - `edit` checks the layout the same way `switch` reads it once your editor
   exits, so mistakes show up right away instead of the next time you switch.
-  Editors with arguments work, e.g. `EDITOR="code --wait"`.
+  If the layout is invalid, it offers to re-open the editor. Editors with
+  arguments work, e.g. `EDITOR="code --wait"`.
+- `list` shows a table of the layouts in a terminal: the session each one
+  opens, how many windows and panes it has, its `cwd`, and why it is invalid
+  if it is. `●` marks layouts whose session is running. Piped, it prints one
+  name per line, e.g. to pick one with
+  `tmux-layout switch "$(tmux-layout list | fzf --tmux)"`.
 - `save` writes the session you are in, or the one given with `--target`
   (`-t`), as a layout `switch` opens again. Like `new`, it never replaces an
   existing layout unless `--force` is given. It saves:

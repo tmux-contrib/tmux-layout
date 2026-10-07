@@ -25,8 +25,9 @@ const SAVE_EXAMPLES: &str = "Examples:
   tmux-layout save dev -t work  # the session named work
   tmux-layout save dev --force  # replace the saved layout";
 const LIST_EXAMPLES: &str = "Examples:
-  tmux-layout list                                 # one name per line
-  tmux-layout switch \"$(tmux-layout list | fzf)\"  # pick one";
+  tmux-layout list                                        # a table in a terminal
+  tmux-layout list | cat                                  # one name per line
+  tmux-layout switch \"$(tmux-layout list | fzf --tmux)\"  # pick one in a popup";
 
 /// Program is the main entry point for the tmux-layout CLI.
 #[derive(Debug, Parser)]

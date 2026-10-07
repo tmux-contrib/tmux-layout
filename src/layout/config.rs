@@ -115,6 +115,11 @@ impl Layout {
         present(&self.session.name).unwrap_or_default()
     }
 
+    /// Returns the working directory of the session, as written.
+    pub fn session_cwd(&self) -> Option<&str> {
+        present(&self.session.cwd)
+    }
+
     /// Returns the windows to create, resolved against the session and `env`.
     pub fn plan(&self, env: &Environment) -> Vec<WindowPlan> {
         self.windows

@@ -2,6 +2,7 @@ mod app;
 mod layout;
 mod log;
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use crate::app::args::*;
@@ -52,9 +53,13 @@ fn run(program: Program) -> Result<()> {
                 .find_map(|name| var(&environment, name))
                 .unwrap_or("vi")
                 .to_string();
+            // Only offer to re-open the editor to someone at a terminal
+            let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+            let confirm = interactive.then(|| Box::new(log::confirm) as Box<_>);
             let mut command = EditCommand {
                 editor,
                 environment,
+                confirm,
             };
             command.execute(&args)
         }
@@ -66,7 +71,19 @@ fn run(program: Program) -> Result<()> {
         }
         ProgramCommand::List(args) => {
             let writer = Box::new(std::io::stdout());
-            let mut command = ListCommand { writer };
+            let table = std::io::stdout().is_terminal();
+            let width = console::Term::stdout()
+                .size_checked()
+                .map(|(_, width)| width.into());
+            let tmux = Box::new(Client::new());
+            let environment = environment();
+            let mut command = ListCommand {
+                writer,
+                table,
+                width,
+                tmux,
+                environment,
+            };
             command.execute(&args)
         }
     }

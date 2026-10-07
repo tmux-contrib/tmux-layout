@@ -1,7 +1,8 @@
 use crate::app::args::*;
 use crate::layout::*;
-use crate::log::{count, debug, info, success};
+use crate::log::{count, debug, error, info, success};
 use anyhow::{bail, Context, Result};
+use console::{measure_text_width, pad_str, style, truncate_str, Alignment};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -181,12 +182,17 @@ impl NewCommand {
     }
 }
 
+/// Confirm asks a yes/no question and returns the answer.
+pub type Confirm = Box<dyn FnMut(&str) -> Result<bool>>;
+
 /// Open a layout in an editor, then check it.
 pub struct EditCommand {
     /// Editor command, which may include arguments (e.g. `code --wait`).
     pub editor: String,
     /// Environment the layout is checked against, as `switch` reads it.
     pub environment: Environment,
+    /// Asks whether to re-open an invalid layout; unset when nobody can answer.
+    pub confirm: Option<Confirm>,
 }
 
 impl EditCommand {
@@ -198,27 +204,45 @@ impl EditCommand {
             Err(err) => bail!("{err} (create it with `tmux-layout new {name}`)"),
         };
 
+        loop {
+            self.open(&path)?;
+            let err = match Layout::read_from_file(&path, &self.environment) {
+                Ok(layout) => {
+                    success(format!(
+                        "{} is valid ({})",
+                        path.display(),
+                        count(layout.windows.len(), "window")
+                    ));
+                    return Ok(());
+                }
+                Err(err) => err,
+            };
+            let Some(confirm) = &mut self.confirm else {
+                bail!("{err:#} (fix it with `tmux-layout edit {name}`)");
+            };
+            error(format!("{err:#}"));
+            if !confirm("Re-open the editor?")? {
+                bail!(
+                    "{} is invalid (fix it with `tmux-layout edit {name}`)",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// Runs the editor on `path` and waits for it to exit.
+    fn open(&self, path: &Path) -> Result<()> {
         // Run the editor through the shell, so commands with arguments work
         let status = Command::new("sh")
             .arg("-c")
             .arg(format!("{} \"$1\"", self.editor))
             .arg("sh")
-            .arg(&path)
+            .arg(path)
             .status()
             .with_context(|| format!("failed to run the editor ({})", self.editor))?;
         if !status.success() {
             bail!("the editor ({}) exited with {status}", self.editor);
         }
-
-        let layout = match Layout::read_from_file(&path, &self.environment) {
-            Ok(layout) => layout,
-            Err(err) => bail!("{err:#} (fix it with `tmux-layout edit {name}`)"),
-        };
-        success(format!(
-            "{} is valid ({})",
-            path.display(),
-            count(layout.windows.len(), "window")
-        ));
         Ok(())
     }
 }
@@ -267,17 +291,167 @@ impl SaveCommand {
 
 /// List the available layouts.
 pub struct ListCommand {
-    /// Writer used to output the layout names.
+    /// Writer used to output the layouts.
     pub writer: Box<dyn Write>,
+    /// Whether to write a table for people instead of one name per line, for scripts.
+    pub table: bool,
+    /// Width of the terminal the table is cut to, if known.
+    pub width: Option<usize>,
+    /// Tmux asked which sessions are running, for the table.
+    pub tmux: Box<dyn Tmux>,
+    /// Environment the layout files are resolved against, as `switch` reads them.
+    pub environment: Environment,
 }
 
 impl ListCommand {
     /// Execute the ListCommand with the provided arguments.
     pub fn execute(&mut self, args: &ListCommandArgs) -> Result<()> {
-        for name in list(&args.parent.layout_dir)? {
-            writeln!(self.writer, "{name}")?;
+        let dir = &args.parent.layout_dir;
+        let names = list(dir)?;
+        if !self.table {
+            for name in names {
+                writeln!(self.writer, "{name}")?;
+            }
+            return Ok(());
         }
+
+        // Without a tmux server, no session is running
+        let sessions = self
+            .tmux
+            .run(&strings(["list-sessions", "-F", "#{session_name}"]))
+            .unwrap_or_default();
+        let sessions: Vec<&str> = sessions.lines().collect();
+
+        let mut rows = vec![Row::header()];
+        for name in &names {
+            let layout =
+                find(dir, name).and_then(|path| Layout::read_from_file(&path, &self.environment));
+            rows.push(Row::new(name, layout, &self.environment, &sessions));
+        }
+        let widths: Vec<usize> = (0..Row::COLUMNS)
+            .map(|i| {
+                rows.iter()
+                    .map(|row| measure_text_width(&row.cells[i]))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        for row in &rows {
+            writeln!(self.writer, "{}", row.render(&widths, self.width))?;
+        }
+
+        let running = rows.iter().filter(|row| row.running).count();
+        let mut summary = count(names.len(), "layout");
+        if running > 0 {
+            summary.push_str(&format!(", {running} running"));
+        }
+        writeln!(self.writer, "\n{}", style(summary).dim())?;
         Ok(())
+    }
+}
+
+/// Row is a line of the table `list` writes: the header, or a layout.
+struct Row {
+    /// Layout, session, windows, panes and working directory.
+    cells: [String; Row::COLUMNS],
+    /// Whether this is the header.
+    header: bool,
+    /// Whether the session of the layout is running.
+    running: bool,
+    /// Whether the layout is invalid; its error is in the last cell.
+    invalid: bool,
+}
+
+impl Row {
+    /// Number of cells in a row.
+    const COLUMNS: usize = 5;
+
+    /// Returns the header row.
+    fn header() -> Self {
+        Self {
+            cells: ["LAYOUT", "SESSION", "WINDOWS", "PANES", "CWD"].map(str::to_string),
+            header: true,
+            running: false,
+            invalid: false,
+        }
+    }
+
+    /// Returns the row of the layout `name`, given whether it could be read and the running
+    /// `sessions`.
+    fn new(name: &str, layout: Result<Layout>, env: &Environment, sessions: &[&str]) -> Self {
+        let none = || "—".to_string();
+        match layout {
+            Ok(layout) => {
+                let panes: usize = layout.plan(env).iter().map(|w| w.panes.len()).sum();
+                Self {
+                    cells: [
+                        name.to_string(),
+                        layout.session_name().to_string(),
+                        layout.windows.len().to_string(),
+                        panes.to_string(),
+                        layout.session_cwd().map_or_else(none, str::to_string),
+                    ],
+                    header: false,
+                    running: sessions.contains(&layout.session_name()),
+                    invalid: false,
+                }
+            }
+            // The cause alone; the path is the layout directory and the name
+            Err(err) => Self {
+                cells: [
+                    name.to_string(),
+                    none(),
+                    none(),
+                    none(),
+                    format!("✗ {}", err.root_cause()),
+                ],
+                header: false,
+                running: false,
+                invalid: true,
+            },
+        }
+    }
+
+    /// Returns the row as a line, its cells padded to `widths` and the last one cut so the line
+    /// fits in `width`.
+    fn render(&self, widths: &[usize], width: Option<usize>) -> String {
+        let marker = match self.running {
+            true => style("●").green().to_string(),
+            false => " ".to_string(),
+        };
+        // The marker and the other cells, each followed by two spaces
+        let used = 2 + widths[..Self::COLUMNS - 1]
+            .iter()
+            .map(|w| w + 2)
+            .sum::<usize>();
+        let rest = width.map_or(usize::MAX, |width| width.saturating_sub(used));
+        let cells = self
+            .cells
+            .iter()
+            .zip(widths)
+            .enumerate()
+            .map(|(i, (cell, &width))| {
+                let last = i == Self::COLUMNS - 1;
+                // Counts are aligned right, under their header
+                let align = match i {
+                    2 | 3 => Alignment::Right,
+                    _ => Alignment::Left,
+                };
+                let text = match last {
+                    true => truncate_str(cell, rest, "…").into_owned(),
+                    false => pad_str(cell, width, align, None).into_owned(),
+                };
+                let text = style(text);
+                match (i, self.header, self.invalid) {
+                    (_, true, _) => text.dim(),
+                    (0, _, _) => text.bold(),
+                    (_, _, true) if last => text.red(),
+                    (_, _, true) => text.dim(),
+                    _ => text,
+                }
+                .to_string()
+            });
+        format!("{marker} {}", cells.collect::<Vec<_>>().join("  "))
     }
 }
 
@@ -316,13 +490,27 @@ mod tests {
     }
 
     /// FakeTmux records the commands it is given and answers them like a tmux server holding
-    /// session `$1`, plus the session `existing` if set.
-    #[derive(Clone, Default)]
+    /// session `$1`, plus the session `existing` if set. Without a server, listing sessions
+    /// fails.
+    #[derive(Clone)]
     struct FakeTmux {
         calls: Rc<RefCell<Vec<String>>>,
+        server: bool,
         existing: Option<&'static str>,
         windows: Rc<Cell<usize>>,
         panes: Rc<Cell<usize>>,
+    }
+
+    impl Default for FakeTmux {
+        fn default() -> Self {
+            Self {
+                calls: Default::default(),
+                server: true,
+                existing: None,
+                windows: Default::default(),
+                panes: Default::default(),
+            }
+        }
     }
 
     impl FakeTmux {
@@ -359,6 +547,12 @@ mod tests {
                 )),
                 "split-window" => Ok(format!("%{}", Self::next(&self.panes))),
                 "list-panes" => Ok(LIST_PANES.replace('|', "\x1f")),
+                "list-sessions" if !self.server => bail!("no server running"),
+                "list-sessions" => Ok(["$1"]
+                    .into_iter()
+                    .chain(self.existing)
+                    .collect::<Vec<_>>()
+                    .join("\n")),
                 _ => Ok(String::new()),
             }
         }
@@ -481,21 +675,59 @@ mod tests {
         assert!(tmux.calls().is_empty());
     }
 
-    #[test]
-    fn list_prints_the_layout_names() {
-        let dir = layout_dir(LAYOUT);
-        std::fs::write(dir.path().join("work.yaml"), "").unwrap();
+    fn list(dir: &Path, table: bool, tmux: &FakeTmux) -> String {
         let writer = Writer::new();
-        let program =
-            Program::parse_from(["tmux-layout", "list", "-d", dir.path().to_str().unwrap()]);
+        let program = Program::parse_from(["tmux-layout", "list", "-d", dir.to_str().unwrap()]);
         let ProgramCommand::List(args) = program.command else {
             unreachable!()
         };
         let mut command = ListCommand {
             writer: Box::new(writer.clone()),
+            table,
+            width: Some(60),
+            tmux: Box::new(tmux.clone()),
+            environment: env(&[]),
         };
         command.execute(&args).unwrap();
-        assert_eq!(writer.contents(), "demo\nwork\n");
+        writer.contents()
+    }
+
+    #[test]
+    fn list_prints_the_layout_names() {
+        let dir = layout_dir(LAYOUT);
+        std::fs::write(dir.path().join("work.yaml"), "").unwrap();
+        let tmux = FakeTmux::default();
+        assert_eq!(list(dir.path(), false, &tmux), "demo\nwork\n");
+        assert!(tmux.calls().is_empty());
+    }
+
+    #[test]
+    fn list_prints_a_table_of_the_layouts() {
+        let dir = layout_dir(LAYOUT);
+        std::fs::write(dir.path().join("broken.yml"), "windows: [{}]").unwrap();
+        let tmux = FakeTmux::existing("demo");
+        assert_eq!(
+            list(dir.path(), true, &tmux),
+            indoc! {"
+                  LAYOUT  SESSION  WINDOWS  PANES  CWD
+                  broken  —              —      —  ✗ session.name is requir…
+                ● demo    demo           2      3  ~/code
+
+                2 layouts, 1 running
+            "}
+        );
+    }
+
+    #[test]
+    fn list_prints_a_table_without_a_tmux_server() {
+        let dir = layout_dir(LAYOUT);
+        let tmux = FakeTmux {
+            server: false,
+            ..FakeTmux::existing("demo")
+        };
+        let table = list(dir.path(), true, &tmux);
+        assert!(table.contains("  demo    demo"));
+        assert!(table.ends_with("\n1 layout\n"));
     }
 
     fn env(vars: &[(&str, &str)]) -> Environment {
@@ -529,8 +761,30 @@ mod tests {
         let mut command = EditCommand {
             editor: editor.to_string(),
             environment: env(&[]),
+            confirm: None,
         };
         command.execute(&args)
+    }
+
+    /// Edits the layout `name` like [`edit`], answering whether to re-open it with `answer`.
+    /// Returns the result and how often it was asked.
+    fn edit_answering(dir: &Path, name: &str, editor: &str, answer: bool) -> (Result<()>, usize) {
+        let dir = dir.to_str().unwrap();
+        let program = Program::parse_from(["tmux-layout", "edit", "-d", dir, name]);
+        let ProgramCommand::Edit(args) = program.command else {
+            unreachable!()
+        };
+        let asked = Rc::new(Cell::new(0));
+        let counter = asked.clone();
+        let mut command = EditCommand {
+            editor: editor.to_string(),
+            environment: env(&[]),
+            confirm: Some(Box::new(move |_| {
+                counter.set(counter.get() + 1);
+                Ok(answer)
+            })),
+        };
+        (command.execute(&args), asked.get())
     }
 
     #[test]
@@ -669,6 +923,40 @@ mod tests {
         assert!(err
             .to_string()
             .contains("fix it with `tmux-layout edit demo`"));
+    }
+
+    #[test]
+    fn edit_reopens_an_invalid_layout_until_it_is_valid() {
+        let dir = layout_dir(LAYOUT);
+        let (invalid, valid) = (dir.path().join("invalid"), dir.path().join("valid"));
+        std::fs::write(&invalid, "windows: [{}]").unwrap();
+        std::fs::write(&valid, LAYOUT).unwrap();
+
+        // The editor "saves" the invalid layout the first time, and a valid one the next
+        let opened = dir.path().join("opened");
+        let editor = format!(
+            "f() {{ if [ -e '{0}' ]; then cp '{1}' \"$1\"; else touch '{0}'; cp '{2}' \"$1\"; fi; }}; f",
+            opened.display(),
+            valid.display(),
+            invalid.display()
+        );
+        let (result, asked) = edit_answering(dir.path(), "demo", &editor, true);
+        result.unwrap();
+        assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn edit_fails_when_reopening_is_declined() {
+        let dir = layout_dir(LAYOUT);
+        let invalid = dir.path().join("invalid");
+        std::fs::write(&invalid, "windows: [{}]").unwrap();
+
+        let editor = format!("cp '{}'", invalid.display());
+        let (result, asked) = edit_answering(dir.path(), "demo", &editor, false);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("demo.yml is invalid"));
+        assert!(err.contains("fix it with `tmux-layout edit demo`"));
+        assert_eq!(asked, 1);
     }
 
     #[test]

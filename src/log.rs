@@ -1,3 +1,4 @@
+use anyhow::Result;
 use console::style;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -57,6 +58,22 @@ pub fn debug(message: impl Display) {
                 .for_stderr()
         );
     }
+}
+
+/// Asks `question` on stderr and reads the answer from stdin; yes unless it is `n` or `no`.
+/// End of input answers no.
+pub fn confirm(question: &str) -> Result<bool> {
+    eprint!(
+        "{} {question} {} ",
+        style("?").cyan().bold().for_stderr(),
+        style("[Y/n]").dim().for_stderr()
+    );
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer)? == 0 {
+        eprintln!();
+        return Ok(false);
+    }
+    Ok(!matches!(answer.trim().to_lowercase().as_str(), "n" | "no"))
 }
 
 /// Returns `count` with `noun`, pluralized by appending `s` (e.g. "1 window", "3 windows").

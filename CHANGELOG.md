@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.5.0...v0.6.0) (2026-11-07)
+
+
+### Features
+
+* **ci:** push the Nix build to Cachix, and merge with the App token ([#23](https://github.com/tmux-contrib/tmux-layout/issues/23)) ([decd45d](https://github.com/tmux-contrib/tmux-layout/commit/decd45d13f3a571ab60bce9d214b9e868fcbcb38))
+
+
+### Bug Fixes
+
+* **ci:** merge with the App token so main gets its CI run ([#25](https://github.com/tmux-contrib/tmux-layout/issues/25)) ([2a20af7](https://github.com/tmux-contrib/tmux-layout/commit/2a20af72e4835877a0c8e7c979e24ba16226ed25))
+
 ## [0.5.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.4.0...v0.5.0) (2026-10-07)
 
 

@@ -2,7 +2,10 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::layout::{expand_home, pane_command, substitute, Environment, OnExit, When};
+use crate::layout::{
+    expand_home, pane_command, program_exists, substitute, words, CommandWhen, Environment, OnExit,
+    When,
+};
 
 /// Extensions of layout files, in the order they are looked up.
 const EXTENSIONS: [&str; 2] = ["yml", "yaml"];
@@ -56,6 +59,46 @@ pub struct Window {
     pub panes: Vec<Pane>,
 }
 
+/// PaneCommand is what runs in a pane: a shell command, or one with conditions.
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum PaneCommand {
+    /// A shell command, like `nvim`.
+    Plain(String),
+    /// A shell command and the conditions it runs under.
+    Full(CommandSpec),
+}
+
+/// CommandSpec is a command with conditions, like `{exec: lazygit, when: exists}`.
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandSpec {
+    /// The shell command.
+    pub exec: String,
+    /// The condition the command runs under; always, unless set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<CommandWhen>,
+}
+
+impl PaneCommand {
+    /// Returns the shell command, unless it is empty.
+    fn exec(&self) -> Option<&str> {
+        let exec = match self {
+            Self::Plain(exec) => exec,
+            Self::Full(spec) => &spec.exec,
+        };
+        Some(exec.as_str()).filter(|e| !e.is_empty())
+    }
+
+    /// Returns the condition the command runs under.
+    fn when(&self) -> CommandWhen {
+        match self {
+            Self::Plain(_) => CommandWhen::Always,
+            Self::Full(spec) => spec.when.unwrap_or_default(),
+        }
+    }
+}
+
 /// Pane is a tmux pane.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -65,7 +108,7 @@ pub struct Pane {
     pub name: Option<String>,
     /// Command run in the pane, instead of the default shell.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
+    pub command: Option<PaneCommand>,
     /// Working directory of the pane.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -96,6 +139,9 @@ pub struct PanePlan {
     pub cwd: Option<String>,
     /// Shell command tmux runs in the pane.
     pub command: Option<String>,
+    /// Program of the command that was left out because it was not found, so the pane runs the
+    /// default shell.
+    pub missing: Option<String>,
 }
 
 /// Returns `value`, unless it is unset or empty.
@@ -120,6 +166,11 @@ impl Layout {
         }
         if layout.windows.is_empty() {
             bail!("at least one window must be declared");
+        }
+        for pane in layout.windows.iter().flat_map(|w| &w.panes) {
+            if matches!(&pane.command, Some(PaneCommand::Full(spec)) if spec.exec.is_empty()) {
+                bail!("a command with conditions needs an exec");
+            }
         }
         for window in &layout.windows {
             if window.when == Some(When::NotExists) && present(&window.name).is_none() {
@@ -156,16 +207,44 @@ impl Layout {
                     when: window.when.unwrap_or_default(),
                     panes: panes
                         .iter()
-                        .map(|pane| PanePlan {
-                            title: present(&pane.name).map(str::to_string),
-                            cwd: self.cwd(window, pane).map(|cwd| expand_home(cwd, env)),
-                            command: present(&pane.command)
-                                .map(|c| pane_command(c, self.on_exit(window, pane), env)),
+                        .map(|pane| {
+                            let (command, missing) = self.command(window, pane, env);
+                            PanePlan {
+                                title: present(&pane.name).map(str::to_string),
+                                cwd: self.cwd(window, pane).map(|cwd| expand_home(cwd, env)),
+                                command,
+                                missing,
+                            }
                         })
                         .collect(),
                 }
             })
             .collect()
+    }
+
+    /// Returns the shell command to run in `pane`, or else the program that was not found.
+    fn command(
+        &self,
+        window: &Window,
+        pane: &Pane,
+        env: &Environment,
+    ) -> (Option<String>, Option<String>) {
+        let Some(command) = pane.command.as_ref() else {
+            return (None, None);
+        };
+        let Some(exec) = command.exec() else {
+            return (None, None);
+        };
+        if command.when() == CommandWhen::Exists {
+            let program = words(exec).into_iter().next().unwrap_or_default();
+            if !program_exists(&program, env) {
+                return (None, Some(program));
+            }
+        }
+        (
+            Some(pane_command(exec, self.on_exit(window, pane), env)),
+            None,
+        )
     }
 
     /// Returns what happens when the command of `pane` exits: its own setting, or else its
@@ -276,11 +355,13 @@ mod tests {
                         title: Some("git".to_string()),
                         cwd: None,
                         command: Some("tig".to_string()),
+                        missing: None,
                     },
                     PanePlan {
                         title: None,
                         cwd: None,
                         command: Some("nvim".to_string()),
+                        missing: None,
                     },
                 ],
             }]
@@ -315,6 +396,48 @@ mod tests {
         assert!(
             Layout::parse("session: {name: s}\nwindows: [{panes: [{on_exit: hold}]}]").is_err()
         );
+    }
+
+    #[test]
+    fn plan_runs_commands_that_exist_and_opens_the_shell_for_those_that_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("tool");
+        std::fs::write(&tool, "").unwrap();
+        std::fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let layout = Layout::parse(indoc! {"
+            session: {name: s}
+            windows:
+              - panes:
+                  - command: {exec: tool --all, when: exists}
+                  - command: {exec: nope, when: exists}
+                  - command: {exec: nope}
+                  - command: {exec: nope, when: always}
+        "})
+        .unwrap();
+        let path = dir.path().display().to_string();
+        let panes = &layout.plan(&env(&[("PATH", &path)]))[0].panes;
+        let commands: Vec<_> = panes.iter().map(|p| p.command.as_deref()).collect();
+        assert_eq!(
+            commands,
+            [Some("tool --all"), None, Some("nope"), Some("nope")]
+        );
+        let missing: Vec<_> = panes.iter().map(|p| p.missing.as_deref()).collect();
+        assert_eq!(missing, [None, Some("nope"), None, None]);
+    }
+
+    #[test]
+    fn parse_rejects_invalid_commands() {
+        for command in [
+            "{exec: ''}",
+            "{when: exists}",
+            "{exec: a, when: later}",
+            "{exec: a, x: 1}",
+        ] {
+            let text =
+                format!("session: {{name: s}}\nwindows: [{{panes: [{{command: {command}}}]}}]");
+            assert!(Layout::parse(&text).is_err(), "{command}");
+        }
     }
 
     #[test]

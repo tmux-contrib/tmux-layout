@@ -106,12 +106,14 @@ impl SwitchCommand {
             bail!("unexpected output from tmux: {output}");
         };
         self.set_title(pane_id, first)?;
+        self.warn_missing(first);
 
         // Without -d, each new pane becomes active and is the one split next
         for pane in rest {
             let command = strings(["split-window", "-t", window_id, "-P", "-F", "#{pane_id}"]);
             let pane_id = self.tmux.run(&pane_args(command, pane))?;
             self.set_title(&pane_id, pane)?;
+            self.warn_missing(pane);
         }
 
         if let Some(layout) = &window.layout {
@@ -119,6 +121,13 @@ impl SwitchCommand {
                 .run(&strings(["select-layout", "-t", window_id, layout]))?;
         }
         Ok(session.to_string())
+    }
+
+    /// Says that `pane` runs the shell because its command was not found.
+    fn warn_missing(&self, pane: &PanePlan) {
+        if let Some(program) = &pane.missing {
+            info(format!("{program} not found; opening a shell"));
+        }
     }
 
     /// Sets the title of the pane with id `pane_id`, if `pane` has one.

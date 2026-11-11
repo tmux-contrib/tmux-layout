@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use std::path::Path;
 
-use crate::layout::{quote, tilde, unwrap_pane_command, words, Environment, OnExit};
+use crate::layout::{quote, tilde, unwrap_pane_command, words, Environment, OnExit, PaneCommand};
 use crate::layout::{Layout, Pane, Session, Window};
 
 /// Separates the fields of [`PANE_FORMAT`]. tmux prints it as is, and names, titles and paths
@@ -116,7 +116,7 @@ impl Layout {
                         let (command, on_exit) = pane.command().unzip();
                         Pane {
                             name: pane.name(),
-                            command,
+                            command: command.map(PaneCommand::Plain),
                             cwd: pane.cwd.clone().filter(|cwd| Some(cwd) != inherited),
                             // Closing is what a pane does anyway
                             on_exit: on_exit.filter(|e| *e != OnExit::Close),
@@ -192,7 +192,7 @@ mod tests {
     fn pane(name: Option<&str>, command: Option<&str>, cwd: Option<&str>) -> Pane {
         Pane {
             name: name.map(str::to_string),
-            command: command.map(str::to_string),
+            command: command.map(|c| PaneCommand::Plain(c.to_string())),
             cwd: cwd.map(str::to_string),
             on_exit: None,
         }
@@ -281,7 +281,10 @@ mod tests {
         let commands: Vec<_> = layout.windows[0]
             .panes
             .iter()
-            .map(|p| p.command.as_deref())
+            .map(|p| match &p.command {
+                Some(PaneCommand::Plain(c)) => Some(c.as_str()),
+                _ => None,
+            })
             .collect();
         assert_eq!(
             commands,

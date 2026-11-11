@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use std::path::Path;
 
-use crate::layout::{quote, tilde, unwrap_pane_command, words, Environment, OnExit, PaneCommand};
+use crate::layout::{quote, tilde, words, Environment, Launch, OnExit, PaneCommand};
 use crate::layout::{Layout, Pane, Session, Window};
 
 /// Separates the fields of [`PANE_FORMAT`]. tmux prints it as is, and names, titles and paths
@@ -74,7 +74,8 @@ impl<'a> PaneInfo<'a> {
                 [command] => command.clone(),
                 args => args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "),
             };
-            return Some(unwrap_pane_command(&command));
+            let launch = Launch::parse(&command);
+            return Some((launch.command, launch.on_exit));
         }
         // Login shells start with a dash, like -zsh
         let program = self.current_command.trim_start_matches('-');

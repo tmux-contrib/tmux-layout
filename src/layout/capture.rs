@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use std::path::Path;
 
-use crate::layout::{quote, tilde, unwrap_pane_command, words, Environment};
+use crate::layout::{quote, tilde, unwrap_pane_command, words, Environment, OnExit};
 use crate::layout::{Layout, Pane, Session, Window};
 
 /// Separates the fields of [`PANE_FORMAT`]. tmux prints it as is, and names, titles and paths
@@ -67,7 +67,7 @@ impl<'a> PaneInfo<'a> {
 
     /// Returns the command the pane was started with, or else the program it runs, unless it
     /// is a shell.
-    fn command(&self) -> Option<String> {
+    fn command(&self) -> Option<(String, OnExit)> {
         if !self.start_command.is_empty() {
             // tmux prints the arguments of the command escaped, joined with spaces
             let command = match &words(self.start_command)[..] {
@@ -78,7 +78,8 @@ impl<'a> PaneInfo<'a> {
         }
         // Login shells start with a dash, like -zsh
         let program = self.current_command.trim_start_matches('-');
-        (!program.is_empty() && !SHELLS.contains(&program)).then(|| program.to_string())
+        (!program.is_empty() && !SHELLS.contains(&program))
+            .then(|| (program.to_string(), OnExit::Close))
     }
 }
 
@@ -111,10 +112,15 @@ impl Layout {
                 let inherited = window_cwd.as_ref().or(session_cwd.as_ref());
                 let mut layout_panes: Vec<Pane> = panes
                     .iter()
-                    .map(|pane| Pane {
-                        name: pane.name(),
-                        command: pane.command(),
-                        cwd: pane.cwd.clone().filter(|cwd| Some(cwd) != inherited),
+                    .map(|pane| {
+                        let (command, on_exit) = pane.command().unzip();
+                        Pane {
+                            name: pane.name(),
+                            command,
+                            cwd: pane.cwd.clone().filter(|cwd| Some(cwd) != inherited),
+                            // Closing is what a pane does anyway
+                            on_exit: on_exit.filter(|e| *e != OnExit::Close),
+                        }
                     })
                     .collect();
                 // A window is created with a pane running the shell anyway
@@ -130,6 +136,7 @@ impl Layout {
                     // The layout of a single pane is the window
                     layout: (panes.len() > 1).then(|| window.window_layout.to_string()),
                     cwd: window_cwd.filter(|cwd| Some(cwd) != session_cwd.as_ref()),
+                    on_exit: None,
                     panes: layout_panes,
                 }
             })
@@ -139,6 +146,7 @@ impl Layout {
             session: Session {
                 name: Some(first.session_name.to_string()),
                 cwd: session_cwd,
+                on_exit: None,
             },
             windows,
         })
@@ -185,6 +193,7 @@ mod tests {
             name: name.map(str::to_string),
             command: command.map(str::to_string),
             cwd: cwd.map(str::to_string),
+            on_exit: None,
         }
     }
 

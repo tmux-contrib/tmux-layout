@@ -70,6 +70,19 @@ impl SwitchCommand {
 
     /// Adds `window` to the session with id `session`.
     fn new_window(&self, session: &str, window: &WindowPlan) -> Result<()> {
+        if let (When::NotExists, Some(name)) = (window.when, &window.name) {
+            let names = self.tmux.run(&strings([
+                "list-windows",
+                "-t",
+                session,
+                "-F",
+                "#{window_name}",
+            ]))?;
+            if names.lines().any(|n| n == name) {
+                info(format!("window '{name}' already exists; skipping"));
+                return Ok(());
+            }
+        }
         let target = format!("{session}:");
         self.create(strings(["new-window", "-d", "-t", &target]), window)?;
         Ok(())
@@ -497,6 +510,8 @@ mod tests {
         calls: Rc<RefCell<Vec<String>>>,
         server: bool,
         existing: Option<&'static str>,
+        /// Names of the windows `list-windows` prints.
+        window_names: &'static str,
         windows: Rc<Cell<usize>>,
         panes: Rc<Cell<usize>>,
     }
@@ -507,6 +522,7 @@ mod tests {
                 calls: Default::default(),
                 server: true,
                 existing: None,
+                window_names: "",
                 windows: Default::default(),
                 panes: Default::default(),
             }
@@ -546,6 +562,7 @@ mod tests {
                     Self::next(&self.panes)
                 )),
                 "split-window" => Ok(format!("%{}", Self::next(&self.panes))),
+                "list-windows" => Ok(self.window_names.to_string()),
                 "list-panes" => Ok(LIST_PANES.replace('|', "\x1f")),
                 "list-sessions" if !self.server => bail!("no server running"),
                 "list-sessions" => Ok(["$1"]
@@ -603,7 +620,16 @@ mod tests {
     }
 
     fn switch(tmux: &FakeTmux, env: &[(&str, &str)], name: &str) -> Result<()> {
-        let dir = layout_dir(LAYOUT);
+        switch_layout(tmux, env, name, LAYOUT)
+    }
+
+    fn switch_layout(
+        tmux: &FakeTmux,
+        env: &[(&str, &str)],
+        name: &str,
+        layout: &str,
+    ) -> Result<()> {
+        let dir = layout_dir(layout);
         let mut command = SwitchCommand {
             tmux: Box::new(tmux.clone()),
             environment: env
@@ -612,6 +638,36 @@ mod tests {
                 .collect(),
         };
         command.execute(&switch_args(dir.path(), name))
+    }
+
+    const WHEN_LAYOUT: &str = indoc! {"
+        session: {name: demo}
+        windows:
+          - {name: editor, when: not_exists}
+          - {name: logs}
+    "};
+
+    #[test]
+    fn switch_skips_windows_that_exist_when_not_exists() {
+        let tmux = FakeTmux {
+            window_names: "zsh\neditor",
+            ..Default::default()
+        };
+        switch_layout(&tmux, &[("TMUX", "/t")], "demo", WHEN_LAYOUT).unwrap();
+        let calls = tmux.calls();
+        assert!(calls.iter().any(|c| c.starts_with("list-windows -t $1")));
+        assert!(!calls.iter().any(|c| c.contains("-n editor")));
+        assert!(calls.iter().any(|c| c.contains("-n logs")));
+    }
+
+    #[test]
+    fn switch_creates_windows_that_do_not_exist_when_not_exists() {
+        let tmux = FakeTmux {
+            window_names: "zsh\neditors",
+            ..Default::default()
+        };
+        switch_layout(&tmux, &[("TMUX", "/t")], "demo", WHEN_LAYOUT).unwrap();
+        assert!(tmux.calls().iter().any(|c| c.contains("-n editor")));
     }
 
     #[test]

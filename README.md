@@ -114,6 +114,7 @@ windows:
   - name: my-window-name
     layout: tiled # optional; passed to `tmux select-layout`
     cwd: ~/code/myapp # optional; overrides session.cwd for this window
+    when: not_exists # optional; skip if the session already has this window
     panes:
       - name: my-tig-pane # optional; sets pane title
         command: "tig" # optional; empty leaves pane in default shell
@@ -142,6 +143,11 @@ created via `tmux split-window`.
   `~` expands to `$HOME`; `$VAR` and `${VAR}` are substituted (see
   below); anything else is passed to `tmux -c` as-is (absolute or
   relative to wherever tmux is invoked).
+- **When**: a window with `when: not_exists` is only created if the
+  session has no window with the same `name`, so re-running `switch`
+  inside tmux doesn't add a second editor. It needs a `name`; focus is not
+  changed when the window is skipped. The default, `always`, creates it
+  every time.
 - **On exit**: by default a pane closes when its `command` exits, like
   in tmux. Set `on_exit: shell` to keep the pane open and drop into
   `$SHELL` instead, which also lets you read the error of a command that

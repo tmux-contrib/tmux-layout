@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::layout::{
-    expand_home, pane_command, program_exists, substitute, words, CommandWhen, Environment, OnExit,
-    When,
+    expand_home, program_exists, substitute, words, CommandWhen, Environment, Launch, OnExit, When,
 };
 
 /// Extensions of layout files, in the order they are looked up.
@@ -298,7 +297,7 @@ impl Layout {
             }
         }
         (
-            Some(pane_command(exec, self.on_exit(window, pane), env)),
+            Some(Launch::new(exec, self.on_exit(window, pane)).render(env)),
             None,
         )
     }

@@ -158,49 +158,71 @@ pub fn program_exists(program: &str, env: &Environment) -> bool {
         .is_some_and(|path| std::env::split_paths(path).any(|dir| executable(&dir.join(program))))
 }
 
-/// Returns the shell command tmux runs in a pane for `command`. In a Nix dev shell, it runs
-/// through `nix develop` and the user's shell, so the tools of the dev shell are available.
-/// With [`OnExit::Shell`], the user's shell replaces the command when it exits. The command is
-/// then quoted as one word and run with `-c`, so nothing in it, like a trailing comment, can
-/// swallow the `exec`.
-pub fn pane_command(command: &str, on_exit: OnExit, env: &Environment) -> String {
-    let shell = var(env, "SHELL");
-    let run = match (var(env, "IN_NIX_SHELL"), on_exit) {
-        (Some(_), _) => format!(
-            "nix develop -c {} -c {}",
-            quote(shell.unwrap_or("bash")),
-            quote(command)
-        ),
-        (None, OnExit::Close) => command.to_string(),
-        (None, OnExit::Shell) => format!("{} -c {}", quote(shell.unwrap_or("sh")), quote(command)),
-    };
-    match on_exit {
-        OnExit::Close => run,
-        OnExit::Shell => format!("{run}; exec {}", quote(shell.unwrap_or("sh"))),
-    }
+/// Launch is what a pane runs and what it does when that exits, before it is written as the
+/// shell command tmux runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launch {
+    /// The shell command.
+    pub command: String,
+    /// What the pane does when the command exits.
+    pub on_exit: OnExit,
 }
 
-/// Returns the command [`pane_command`] wrapped for `command`, or `command` itself when it
-/// did not, and what the pane does when the command exits. Only the exact forms
-/// [`pane_command`] writes are unwrapped, so a command that merely contains `; exec` or
-/// `sh -c` is left as is.
-pub fn unwrap_pane_command(command: &str) -> (String, OnExit) {
-    if let Some((head, shell)) = command.rsplit_once("; exec ") {
-        if let [shell] = &words(shell)[..] {
-            let head = words(head);
-            match head.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-                ["nix", "develop", "-c", _, "-c", inner] => {
-                    return (inner.to_string(), OnExit::Shell)
-                }
-                [run, "-c", inner] if run == shell => return (inner.to_string(), OnExit::Shell),
-                _ => {}
-            }
+impl Launch {
+    /// Returns the launch of `command`.
+    pub fn new(command: &str, on_exit: OnExit) -> Self {
+        Self {
+            command: command.to_string(),
+            on_exit,
         }
     }
-    let words = words(command);
-    match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        ["nix", "develop", "-c", _, "-c", inner] => (inner.to_string(), OnExit::Close),
-        _ => (command.to_string(), OnExit::Close),
+
+    /// Returns the shell command tmux runs in a pane. In a Nix dev shell, it runs through
+    /// `nix develop` and the user's shell, so the tools of the dev shell are available. With
+    /// [`OnExit::Shell`], the user's shell replaces the command when it exits. The command is
+    /// then quoted as one word and run with `-c`, so nothing in it, like a trailing comment,
+    /// can swallow the `exec`.
+    pub fn render(&self, env: &Environment) -> String {
+        let shell = var(env, "SHELL");
+        let command = &self.command;
+        let run = match (var(env, "IN_NIX_SHELL"), self.on_exit) {
+            (Some(_), _) => format!(
+                "nix develop -c {} -c {}",
+                quote(shell.unwrap_or("bash")),
+                quote(command)
+            ),
+            (None, OnExit::Close) => command.to_string(),
+            (None, OnExit::Shell) => {
+                format!("{} -c {}", quote(shell.unwrap_or("sh")), quote(command))
+            }
+        };
+        match self.on_exit {
+            OnExit::Close => run,
+            OnExit::Shell => format!("{run}; exec {}", quote(shell.unwrap_or("sh"))),
+        }
+    }
+
+    /// Returns the launch [`Launch::render`] wrote as `rendered`, or `rendered` itself as the
+    /// command when it did not. Only the exact forms it writes are unwrapped, so a command
+    /// that merely contains `; exec` or `sh -c` is left as is.
+    pub fn parse(rendered: &str) -> Self {
+        if let Some((head, shell)) = rendered.rsplit_once("; exec ") {
+            if let [shell] = &words(shell)[..] {
+                let head = words(head);
+                match head.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+                    ["nix", "develop", "-c", _, "-c", inner] => {
+                        return Self::new(inner, OnExit::Shell)
+                    }
+                    [run, "-c", inner] if run == shell => return Self::new(inner, OnExit::Shell),
+                    _ => {}
+                }
+            }
+        }
+        let words = words(rendered);
+        match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+            ["nix", "develop", "-c", _, "-c", inner] => Self::new(inner, OnExit::Close),
+            _ => Self::new(rendered, OnExit::Close),
+        }
     }
 }
 
@@ -267,27 +289,27 @@ mod tests {
     }
 
     #[test]
-    fn pane_command_passes_the_command_through() {
+    fn render_passes_the_command_through() {
         assert_eq!(
-            pane_command("tig", OnExit::Close, &env(&[("IN_NIX_SHELL", "")])),
+            Launch::new("tig", OnExit::Close).render(&env(&[("IN_NIX_SHELL", "")])),
             "tig"
         );
     }
 
     #[test]
-    fn pane_command_runs_in_nix_develop_inside_a_nix_shell() {
+    fn render_runs_in_nix_develop_inside_a_nix_shell() {
         let env = env(&[("IN_NIX_SHELL", "impure"), ("SHELL", "/bin/zsh")]);
         assert_eq!(
-            pane_command("tig --all | less", OnExit::Close, &env),
+            Launch::new("tig --all | less", OnExit::Close).render(&env),
             "nix develop -c /bin/zsh -c 'tig --all | less'"
         );
     }
 
     #[test]
-    fn pane_command_defaults_to_bash_inside_a_nix_shell() {
+    fn render_defaults_to_bash_inside_a_nix_shell() {
         let env = env(&[("IN_NIX_SHELL", "pure")]);
         assert_eq!(
-            pane_command("tig", OnExit::Close, &env),
+            Launch::new("tig", OnExit::Close).render(&env),
             "nix develop -c bash -c tig"
         );
     }
@@ -346,20 +368,20 @@ mod tests {
     }
 
     #[test]
-    fn pane_command_falls_back_to_the_shell_on_exit() {
+    fn render_falls_back_to_the_shell_on_exit() {
         let env = env(&[("SHELL", "/bin/zsh")]);
         assert_eq!(
-            pane_command("tig", OnExit::Shell, &env),
+            Launch::new("tig", OnExit::Shell).render(&env),
             "/bin/zsh -c tig; exec /bin/zsh"
         );
         assert_eq!(
-            pane_command("tig", OnExit::Shell, &super::Environment::new()),
+            Launch::new("tig", OnExit::Shell).render(&super::Environment::new()),
             "sh -c tig; exec sh"
         );
     }
 
     #[test]
-    fn pane_command_reaches_the_shell_after_a_trailing_comment() {
+    fn render_reaches_the_shell_after_a_trailing_comment() {
         use std::os::unix::fs::PermissionsExt;
 
         // A shell that runs commands, and says so when it is started without one
@@ -374,7 +396,7 @@ mod tests {
         let env = env(&[("SHELL", shell.to_str().unwrap())]);
 
         for command in ["echo hi # it's a comment", "echo hi &", "echo 'hi'"] {
-            let run = pane_command(command, OnExit::Shell, &env);
+            let run = Launch::new(command, OnExit::Shell).render(&env);
             let output = std::process::Command::new("sh")
                 .args(["-c", &run])
                 .stdin(std::process::Stdio::null())
@@ -387,15 +409,15 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_pane_command_undoes_pane_command() {
+    fn parse_undoes_render() {
         let nix = env(&[("IN_NIX_SHELL", "impure"), ("SHELL", "/bin/zsh")]);
         let plain = env(&[("SHELL", "/bin/zsh")]);
         for env in [&nix, &plain] {
             for on_exit in [OnExit::Close, OnExit::Shell] {
                 for command in ["tig", "tig --all | less", "echo 'hi' # it's"] {
                     assert_eq!(
-                        unwrap_pane_command(&pane_command(command, on_exit, env)),
-                        (command.to_string(), on_exit)
+                        Launch::parse(&Launch::new(command, on_exit).render(env)),
+                        Launch::new(command, on_exit)
                     );
                 }
             }
@@ -403,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_pane_command_leaves_other_commands_as_they_are() {
+    fn parse_leaves_other_commands_as_they_are() {
         for command in [
             "tig --all",
             "nix develop",
@@ -411,10 +433,7 @@ mod tests {
             "sh -c foo",
             "zsh -c foo; exec bash",
         ] {
-            assert_eq!(
-                unwrap_pane_command(command),
-                (command.to_string(), OnExit::Close)
-            );
+            assert_eq!(Launch::parse(command), Launch::new(command, OnExit::Close));
         }
     }
 }

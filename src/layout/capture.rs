@@ -137,6 +137,7 @@ impl Layout {
                     layout: (panes.len() > 1).then(|| window.window_layout.to_string()),
                     cwd: window_cwd.filter(|cwd| Some(cwd) != session_cwd.as_ref()),
                     on_exit: None,
+                    when: None,
                     panes: layout_panes,
                 }
             })

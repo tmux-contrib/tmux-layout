@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::layout::{expand_home, pane_command, substitute, Environment, OnExit};
+use crate::layout::{expand_home, pane_command, substitute, Environment, OnExit, When};
 
 /// Extensions of layout files, in the order they are looked up.
 const EXTENSIONS: [&str; 2] = ["yml", "yaml"];
@@ -48,6 +48,9 @@ pub struct Window {
     /// What happens to the panes when their command exits, unless the pane sets it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_exit: Option<OnExit>,
+    /// The condition the window is created under; always, unless set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
     /// The panes, in order. The first one is created with the window.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub panes: Vec<Pane>,
@@ -78,6 +81,8 @@ pub struct WindowPlan {
     pub name: Option<String>,
     /// Layout passed to `tmux select-layout`.
     pub layout: Option<String>,
+    /// The condition the window is created under.
+    pub when: When,
     /// The panes; never empty.
     pub panes: Vec<PanePlan>,
 }
@@ -116,6 +121,11 @@ impl Layout {
         if layout.windows.is_empty() {
             bail!("at least one window must be declared");
         }
+        for window in &layout.windows {
+            if window.when == Some(When::NotExists) && present(&window.name).is_none() {
+                bail!("a window with when: not_exists needs a name");
+            }
+        }
         Ok(layout)
     }
 
@@ -143,6 +153,7 @@ impl Layout {
                 WindowPlan {
                     name: present(&window.name).map(str::to_string),
                     layout: present(&window.layout).map(str::to_string),
+                    when: window.when.unwrap_or_default(),
                     panes: panes
                         .iter()
                         .map(|pane| PanePlan {
@@ -259,6 +270,7 @@ mod tests {
             vec![WindowPlan {
                 name: Some("editor".to_string()),
                 layout: Some("tiled".to_string()),
+                when: When::Always,
                 panes: vec![
                     PanePlan {
                         title: Some("git".to_string()),
@@ -303,6 +315,27 @@ mod tests {
         assert!(
             Layout::parse("session: {name: s}\nwindows: [{panes: [{on_exit: hold}]}]").is_err()
         );
+    }
+
+    #[test]
+    fn plan_reads_when() {
+        let layout = Layout::parse(indoc! {"
+            session: {name: s}
+            windows:
+              - {name: a, when: not_exists}
+              - {name: b, when: always}
+              - {name: c}
+        "})
+        .unwrap();
+        let whens: Vec<_> = layout.plan(&env(&[])).iter().map(|w| w.when).collect();
+        assert_eq!(whens, [When::NotExists, When::Always, When::Always]);
+    }
+
+    #[test]
+    fn parse_rejects_when_not_exists_without_a_name() {
+        let err = Layout::parse("session: {name: s}\nwindows: [{when: not_exists}]").unwrap_err();
+        assert!(err.to_string().contains("needs a name"));
+        assert!(Layout::parse("session: {name: s}\nwindows: [{when: later}]").is_err());
     }
 
     #[test]
@@ -351,6 +384,7 @@ mod tests {
             vec![WindowPlan {
                 name: None,
                 layout: None,
+                when: When::Always,
                 panes: vec![pane("/s")],
             }]
         );

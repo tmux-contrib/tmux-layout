@@ -120,6 +120,17 @@ pub enum OnExit {
     Shell,
 }
 
+/// When is the condition a window must meet to be created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum When {
+    /// The window is always created.
+    #[default]
+    Always,
+    /// The window is created unless the session already has a window with its name.
+    NotExists,
+}
+
 /// Returns the shell command tmux runs in a pane for `command`. In a Nix dev shell, it runs
 /// through `nix develop` and the user's shell, so the tools of the dev shell are available.
 /// With [`OnExit::Shell`], the user's shell replaces the command when it exits.

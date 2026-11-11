@@ -444,7 +444,10 @@ mod tests {
             .iter()
             .flat_map(|w| w.panes.iter().map(|p| p.command.clone().unwrap()))
             .collect();
-        assert_eq!(commands, ["a; exec zsh", "b", "c", "d; exec zsh"]);
+        assert_eq!(
+            commands,
+            ["zsh -c a; exec zsh", "b", "c", "zsh -c d; exec zsh"]
+        );
     }
 
     #[test]

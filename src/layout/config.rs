@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::layout::{expand_home, pane_command, substitute, Environment};
+use crate::layout::{expand_home, pane_command, substitute, Environment, OnExit};
 
 /// Extensions of layout files, in the order they are looked up.
 const EXTENSIONS: [&str; 2] = ["yml", "yaml"];
@@ -27,6 +27,9 @@ pub struct Session {
     /// Working directory of every pane, unless its window or the pane sets one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// What happens to the panes when their command exits, unless their window or the pane sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_exit: Option<OnExit>,
 }
 
 /// Window is a tmux window and its panes.
@@ -42,6 +45,9 @@ pub struct Window {
     /// Working directory of every pane, unless the pane sets one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// What happens to the panes when their command exits, unless the pane sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_exit: Option<OnExit>,
     /// The panes, in order. The first one is created with the window.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub panes: Vec<Pane>,
@@ -60,6 +66,9 @@ pub struct Pane {
     /// Working directory of the pane.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// What happens to the pane when its command exits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_exit: Option<OnExit>,
 }
 
 /// WindowPlan is a window ready to be created: names and paths resolved.
@@ -139,12 +148,22 @@ impl Layout {
                         .map(|pane| PanePlan {
                             title: present(&pane.name).map(str::to_string),
                             cwd: self.cwd(window, pane).map(|cwd| expand_home(cwd, env)),
-                            command: present(&pane.command).map(|c| pane_command(c, env)),
+                            command: present(&pane.command)
+                                .map(|c| pane_command(c, self.on_exit(window, pane), env)),
                         })
                         .collect(),
                 }
             })
             .collect()
+    }
+
+    /// Returns what happens when the command of `pane` exits: its own setting, or else its
+    /// window's, or else the session's.
+    fn on_exit(&self, window: &Window, pane: &Pane) -> OnExit {
+        pane.on_exit
+            .or(window.on_exit)
+            .or(self.session.on_exit)
+            .unwrap_or_default()
     }
 
     /// Returns the working directory of `pane`: its own, or else its window's, or else the
@@ -253,6 +272,36 @@ mod tests {
                     },
                 ],
             }]
+        );
+    }
+
+    #[test]
+    fn plan_resolves_on_exit_from_pane_window_and_session() {
+        let layout = Layout::parse(indoc! {"
+            session: {name: s, on_exit: shell}
+            windows:
+              - panes:
+                  - command: a
+                  - {command: b, on_exit: close}
+              - on_exit: close
+                panes:
+                  - command: c
+                  - {command: d, on_exit: shell}
+        "})
+        .unwrap();
+        let env = env(&[("SHELL", "zsh")]);
+        let commands: Vec<_> = layout
+            .plan(&env)
+            .iter()
+            .flat_map(|w| w.panes.iter().map(|p| p.command.clone().unwrap()))
+            .collect();
+        assert_eq!(commands, ["a; exec zsh", "b", "c", "d; exec zsh"]);
+    }
+
+    #[test]
+    fn parse_rejects_unknown_on_exit() {
+        assert!(
+            Layout::parse("session: {name: s}\nwindows: [{panes: [{on_exit: hold}]}]").is_err()
         );
     }
 

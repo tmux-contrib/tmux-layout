@@ -109,6 +109,7 @@ like this, in `~/.config/tmux/layouts/dev.yml`:
 session:
   name: my-session-name
   cwd: ~/code # optional; default cwd for every pane
+  on_exit: close # optional; `close` (default) or `shell`, for every pane
 windows:
   - name: my-window-name
     layout: tiled # optional; passed to `tmux select-layout`
@@ -121,6 +122,7 @@ windows:
       - name: my-nvim-pane
         command: "nvim"
         cwd: ~/code/myapp/src # optional; overrides window.cwd for this pane
+        on_exit: shell # optional; keep the pane open, running your shell
 ```
 
 A layout may declare multiple `windows`, each with one or more `panes`.
@@ -140,6 +142,11 @@ created via `tmux split-window`.
   `~` expands to `$HOME`; `$VAR` and `${VAR}` are substituted (see
   below); anything else is passed to `tmux -c` as-is (absolute or
   relative to wherever tmux is invoked).
+- **On exit**: by default a pane closes when its `command` exits, like
+  in tmux. Set `on_exit: shell` to keep the pane open and drop into
+  `$SHELL` instead, which also lets you read the error of a command that
+  fails at startup. It may be set at session, window, or pane level, with
+  the same **pane > window > session** precedence as `cwd`.
 - **Nix dev shells**: if `IN_NIX_SHELL` is set, every pane command is
   run as `nix develop -c "$SHELL" -c "<cmd>"` so tools defined in the
   dev shell remain available and shell features (pipes, `&&`, aliases)

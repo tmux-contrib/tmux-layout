@@ -160,36 +160,48 @@ pub fn program_exists(program: &str, env: &Environment) -> bool {
 
 /// Returns the shell command tmux runs in a pane for `command`. In a Nix dev shell, it runs
 /// through `nix develop` and the user's shell, so the tools of the dev shell are available.
-/// With [`OnExit::Shell`], the user's shell replaces the command when it exits.
+/// With [`OnExit::Shell`], the user's shell replaces the command when it exits. The command is
+/// then quoted as one word and run with `-c`, so nothing in it, like a trailing comment, can
+/// swallow the `exec`.
 pub fn pane_command(command: &str, on_exit: OnExit, env: &Environment) -> String {
     let shell = var(env, "SHELL");
-    let command = match var(env, "IN_NIX_SHELL") {
-        Some(_) => format!(
+    let run = match (var(env, "IN_NIX_SHELL"), on_exit) {
+        (Some(_), _) => format!(
             "nix develop -c {} -c {}",
             quote(shell.unwrap_or("bash")),
             quote(command)
         ),
-        None => command.to_string(),
+        (None, OnExit::Close) => command.to_string(),
+        (None, OnExit::Shell) => format!("{} -c {}", quote(shell.unwrap_or("sh")), quote(command)),
     };
     match on_exit {
-        OnExit::Close => command,
-        OnExit::Shell => format!("{command}; exec {}", quote(shell.unwrap_or("sh"))),
+        OnExit::Close => run,
+        OnExit::Shell => format!("{run}; exec {}", quote(shell.unwrap_or("sh"))),
     }
 }
 
-/// Returns the command [`pane_command`] ran through `nix develop` in `command`, or `command`
-/// itself when it doesn't, and what it does when the command exits.
+/// Returns the command [`pane_command`] wrapped for `command`, or `command` itself when it
+/// did not, and what the pane does when the command exits. Only the exact forms
+/// [`pane_command`] writes are unwrapped, so a command that merely contains `; exec` or
+/// `sh -c` is left as is.
 pub fn unwrap_pane_command(command: &str) -> (String, OnExit) {
-    let (command, on_exit) = match command.rsplit_once("; exec ") {
-        Some((command, shell)) if words(shell).len() == 1 => (command, OnExit::Shell),
-        _ => (command, OnExit::Close),
-    };
+    if let Some((head, shell)) = command.rsplit_once("; exec ") {
+        if let [shell] = &words(shell)[..] {
+            let head = words(head);
+            match head.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+                ["nix", "develop", "-c", _, "-c", inner] => {
+                    return (inner.to_string(), OnExit::Shell)
+                }
+                [run, "-c", inner] if run == shell => return (inner.to_string(), OnExit::Shell),
+                _ => {}
+            }
+        }
+    }
     let words = words(command);
-    let command = match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        ["nix", "develop", "-c", _, "-c", inner] => inner.to_string(),
-        _ => command.to_string(),
-    };
-    (command, on_exit)
+    match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["nix", "develop", "-c", _, "-c", inner] => (inner.to_string(), OnExit::Close),
+        _ => (command.to_string(), OnExit::Close),
+    }
 }
 
 #[cfg(test)]
@@ -338,30 +350,71 @@ mod tests {
         let env = env(&[("SHELL", "/bin/zsh")]);
         assert_eq!(
             pane_command("tig", OnExit::Shell, &env),
-            "tig; exec /bin/zsh"
+            "/bin/zsh -c tig; exec /bin/zsh"
         );
         assert_eq!(
             pane_command("tig", OnExit::Shell, &super::Environment::new()),
-            "tig; exec sh"
+            "sh -c tig; exec sh"
         );
     }
 
     #[test]
+    fn pane_command_reaches_the_shell_after_a_trailing_comment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // A shell that runs commands, and says so when it is started without one
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir.path().join("shell");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nif [ \"$1\" = -c ]; then sh -c \"$2\"; else echo REACHED; fi\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = env(&[("SHELL", shell.to_str().unwrap())]);
+
+        for command in ["echo hi # it's a comment", "echo hi &", "echo 'hi'"] {
+            let run = pane_command(command, OnExit::Shell, &env);
+            let output = std::process::Command::new("sh")
+                .args(["-c", &run])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("hi"), "{command}: {stdout}");
+            assert!(stdout.contains("REACHED"), "{command}: {stdout}");
+        }
+    }
+
+    #[test]
     fn unwrap_pane_command_undoes_pane_command() {
-        let env = env(&[("IN_NIX_SHELL", "impure"), ("SHELL", "/bin/zsh")]);
-        for on_exit in [OnExit::Close, OnExit::Shell] {
-            for command in ["tig", "tig --all | less", "echo 'hi'"] {
-                assert_eq!(
-                    unwrap_pane_command(&pane_command(command, on_exit, &env)),
-                    (command.to_string(), on_exit)
-                );
+        let nix = env(&[("IN_NIX_SHELL", "impure"), ("SHELL", "/bin/zsh")]);
+        let plain = env(&[("SHELL", "/bin/zsh")]);
+        for env in [&nix, &plain] {
+            for on_exit in [OnExit::Close, OnExit::Shell] {
+                for command in ["tig", "tig --all | less", "echo 'hi' # it's"] {
+                    assert_eq!(
+                        unwrap_pane_command(&pane_command(command, on_exit, env)),
+                        (command.to_string(), on_exit)
+                    );
+                }
             }
         }
-        let plain = ("tig --all".to_string(), OnExit::Close);
-        assert_eq!(unwrap_pane_command("tig --all"), plain);
-        assert_eq!(
-            unwrap_pane_command("nix develop"),
-            ("nix develop".to_string(), OnExit::Close)
-        );
+    }
+
+    #[test]
+    fn unwrap_pane_command_leaves_other_commands_as_they_are() {
+        for command in [
+            "tig --all",
+            "nix develop",
+            "foo; exec zsh",
+            "sh -c foo",
+            "zsh -c foo; exec bash",
+        ] {
+            assert_eq!(
+                unwrap_pane_command(command),
+                (command.to_string(), OnExit::Close)
+            );
+        }
     }
 }

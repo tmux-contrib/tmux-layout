@@ -131,6 +131,33 @@ pub enum When {
     NotExists,
 }
 
+/// CommandWhen is the condition a pane command must meet to run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandWhen {
+    /// The command always runs.
+    #[default]
+    Always,
+    /// The command runs if its program is found, and the pane opens the shell if not.
+    Exists,
+}
+
+/// Returns whether `program` can run: a path to an executable file, or else the name of one in
+/// a directory of the `PATH` in `env`.
+pub fn program_exists(program: &str, env: &Environment) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = |path: &Path| {
+        path.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        return executable(Path::new(program));
+    }
+    var(env, "PATH")
+        .is_some_and(|path| std::env::split_paths(path).any(|dir| executable(&dir.join(program))))
+}
+
 /// Returns the shell command tmux runs in a pane for `command`. In a Nix dev shell, it runs
 /// through `nix develop` and the user's shell, so the tools of the dev shell are available.
 /// With [`OnExit::Shell`], the user's shell replaces the command when it exits.
@@ -286,6 +313,24 @@ mod tests {
         for value in ["tig", "tig --all | less", "it's", "", r"a\b"] {
             assert_eq!(words(&quote(value)), vec![value]);
         }
+    }
+
+    #[test]
+    fn program_exists_looks_in_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("tool");
+        std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+        let env = env(&[("PATH", &format!("/nonexistent:{}", dir.path().display()))]);
+        assert!(!program_exists("tool", &env));
+        std::fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        assert!(program_exists("tool", &env));
+        assert!(program_exists(
+            tool.to_str().unwrap(),
+            &super::Environment::new()
+        ));
+        assert!(!program_exists("other", &env));
+        assert!(!program_exists("tool", &super::Environment::new()));
     }
 
     #[test]

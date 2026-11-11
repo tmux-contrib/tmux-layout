@@ -120,6 +120,9 @@ windows:
         command: "tig" # optional; empty leaves pane in default shell
       - name: my-claude-pane
         command: "claude"
+      - command: # optional; the long form of `command`
+          exec: "lazygit"
+          when: exists # run only if `lazygit` is installed, else open the shell
       - name: my-nvim-pane
         command: "nvim"
         cwd: ~/code/myapp/src # optional; overrides window.cwd for this pane
@@ -148,6 +151,11 @@ created via `tmux split-window`.
   inside tmux doesn't add a second editor. It needs a `name`; focus is not
   changed when the window is skipped. The default, `always`, creates it
   every time.
+- **Command conditions**: `command` is a string, or a map with `exec`
+  and `when: exists | always` (default `always`). With `exists`, the
+  command runs only if its first word is an executable on `PATH` (or an
+  executable path); otherwise the pane opens the default shell, so the
+  window keeps its panes, and `tmux-layout` prints a notice.
 - **On exit**: by default a pane closes when its `command` exits, like
   in tmux. Set `on_exit: shell` to keep the pane open and drop into
   `$SHELL` instead, which also lets you read the error of a command that

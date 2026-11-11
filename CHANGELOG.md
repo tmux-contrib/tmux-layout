@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.6.0...v0.7.0) (2026-11-11)
+
+
+### Features
+
+* **layout:** add command conditions with when: exists ([#30](https://github.com/tmux-contrib/tmux-layout/issues/30)) ([49353ee](https://github.com/tmux-contrib/tmux-layout/commit/49353ee96efda3be2a6a8d0030f5209d0c19f0ff))
+* **layout:** add on_exit to keep a pane open in the shell ([#27](https://github.com/tmux-contrib/tmux-layout/issues/27)) ([1b73e61](https://github.com/tmux-contrib/tmux-layout/commit/1b73e61d6968a05453912d8ca75a6b23e8801671))
+* **layout:** add when: not_exists to skip a window that already exists ([#29](https://github.com/tmux-contrib/tmux-layout/issues/29)) ([e40b51d](https://github.com/tmux-contrib/tmux-layout/commit/e40b51d5f22e73632b2c9f2030423be13c6c1c57))
+
+
+### Bug Fixes
+
+* **layout:** keep on_exit: shell working for commands ending in a comment ([#31](https://github.com/tmux-contrib/tmux-layout/issues/31)) ([26cf92c](https://github.com/tmux-contrib/tmux-layout/commit/26cf92ce2ed7285dac06ba6c04315e48bbfb2e8d))
+
 ## [0.6.0](https://github.com/tmux-contrib/tmux-layout/compare/v0.5.0...v0.6.0) (2026-11-07)
 
 

@@ -60,13 +60,15 @@ pub struct Window {
 }
 
 /// PaneCommand is what runs in a pane: a shell command, or one with conditions.
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum PaneCommand {
     /// A shell command, like `nvim`.
     Plain(String),
     /// A shell command and the conditions it runs under.
     Full(CommandSpec),
+    /// Nothing, like `command:` after an unset variable was substituted.
+    Unset(()),
 }
 
 /// CommandSpec is a command with conditions, like `{exec: lazygit, when: exists}`.
@@ -80,12 +82,66 @@ pub struct CommandSpec {
     pub when: Option<CommandWhen>,
 }
 
+impl<'de> Deserialize<'de> for PaneCommand {
+    /// Reads a scalar as the shell command it spells, like `false` or `7`, as a string field
+    /// would, and a map as a command with conditions.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{value::MapAccessDeserializer, Error, MapAccess, Visitor};
+        use std::fmt;
+
+        struct CommandVisitor;
+
+        impl<'de> Visitor<'de> for CommandVisitor {
+            type Value = PaneCommand;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a command, or a map with exec and when")
+            }
+
+            fn visit_str<E: Error>(self, v: &str) -> Result<PaneCommand, E> {
+                Ok(PaneCommand::Plain(v.to_string()))
+            }
+
+            fn visit_bool<E: Error>(self, v: bool) -> Result<PaneCommand, E> {
+                self.visit_str(&v.to_string())
+            }
+
+            fn visit_i64<E: Error>(self, v: i64) -> Result<PaneCommand, E> {
+                self.visit_str(&v.to_string())
+            }
+
+            fn visit_u64<E: Error>(self, v: u64) -> Result<PaneCommand, E> {
+                self.visit_str(&v.to_string())
+            }
+
+            fn visit_f64<E: Error>(self, v: f64) -> Result<PaneCommand, E> {
+                self.visit_str(&v.to_string())
+            }
+
+            fn visit_unit<E: Error>(self) -> Result<PaneCommand, E> {
+                Ok(PaneCommand::Unset(()))
+            }
+
+            fn visit_none<E: Error>(self) -> Result<PaneCommand, E> {
+                self.visit_unit()
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<PaneCommand, A::Error> {
+                CommandSpec::deserialize(MapAccessDeserializer::new(map)).map(PaneCommand::Full)
+            }
+        }
+
+        deserializer.deserialize_any(CommandVisitor)
+    }
+}
+
 impl PaneCommand {
     /// Returns the shell command, unless it is empty.
     fn exec(&self) -> Option<&str> {
         let exec = match self {
             Self::Plain(exec) => exec,
             Self::Full(spec) => &spec.exec,
+            Self::Unset(()) => return None,
         };
         Some(exec.as_str()).filter(|e| !e.is_empty())
     }
@@ -93,7 +149,7 @@ impl PaneCommand {
     /// Returns the condition the command runs under.
     fn when(&self) -> CommandWhen {
         match self {
-            Self::Plain(_) => CommandWhen::Always,
+            Self::Plain(_) | Self::Unset(()) => CommandWhen::Always,
             Self::Full(spec) => spec.when.unwrap_or_default(),
         }
     }
@@ -424,6 +480,36 @@ mod tests {
         );
         let missing: Vec<_> = panes.iter().map(|p| p.missing.as_deref()).collect();
         assert_eq!(missing, [None, Some("nope"), None, None]);
+    }
+
+    #[test]
+    fn plan_treats_an_empty_command_as_unset() {
+        let layout = Layout::parse(indoc! {"
+            session: {name: s}
+            windows:
+              - panes:
+                  - command:
+                  - command: ''
+                  - command: null
+        "})
+        .unwrap();
+        let panes = &layout.plan(&env(&[]))[0].panes;
+        assert!(panes
+            .iter()
+            .all(|p| p.command.is_none() && p.missing.is_none()));
+    }
+
+    #[test]
+    fn plan_reads_scalar_commands_as_strings() {
+        let layout = Layout::parse(indoc! {"
+            session: {name: s}
+            windows:
+              - panes: [{command: false}, {command: 7}, {command: true}]
+        "})
+        .unwrap();
+        let panes = &layout.plan(&env(&[]))[0].panes;
+        let commands: Vec<_> = panes.iter().map(|p| p.command.as_deref()).collect();
+        assert_eq!(commands, [Some("false"), Some("7"), Some("true")]);
     }
 
     #[test]

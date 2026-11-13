@@ -2,8 +2,8 @@
   description = "tmux-layout - declare tmux sessions, windows and panes in YAML";
 
   nixConfig = {
-    extra-substituters = [ "https://ralch.cachix.org" ];
-    extra-trusted-public-keys = [ "ralch.cachix.org-1:ti5RSqCJwd+VIv7dlxJEAVD98KIJDLxj1yJY+S80Q3A=" ];
+    extra-substituters = [ "https://nixos-contrib.cachix.org" ];
+    extra-trusted-public-keys = [ "nixos-contrib.cachix.org-1:WRyXCyMQGjYEEC87RdlW4ZbK/R3Ia4/WGYEoIP9X/o0=" ];
   };
 
   inputs = {
